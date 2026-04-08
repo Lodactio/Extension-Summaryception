@@ -212,20 +212,144 @@ function buildPassageFromRange(chat, startIdx, endIdx) {
     return lines.join('\n');
 }
 
+// ─── Prompt Toggle Management ────────────────────────────────────────
+
+/**
+ * Get all prompt manager entries (the toggleable items in Chat Completion presets).
+ * Returns the array of prompt entries from the active preset.
+ */
+function getPromptManagerEntries() {
+    try {
+        const ctx = SillyTavern.getContext();
+        // The prompt manager stores entries in the active preset's prompt_manager_settings
+        if (ctx.promptManager) {
+            return ctx.promptManager.getPromptCollection()?.collection || [];
+        }
+        // Fallback: access via oai_settings
+        if (ctx.oai_settings?.prompt_manager_settings?.prompts) {
+            return ctx.oai_settings.prompt_manager_settings.prompts;
+        }
+    } catch (e) {
+        log('Could not access prompt manager entries:', e);
+    }
+    return [];
+}
+
+/**
+ * Snapshot the current enabled/disabled state of all prompt toggles.
+ * Returns a Map of identifier → boolean.
+ */
+function snapshotPromptToggles() {
+    const snapshot = new Map();
+    try {
+        const ctx = SillyTavern.getContext();
+        const promptManager = ctx.promptManager;
+
+        if (!promptManager) {
+            log('No prompt manager available, skipping toggle snapshot.');
+            return snapshot;
+        }
+
+        const collection = promptManager.getPromptCollection();
+        if (!collection?.collection) return snapshot;
+
+        for (const entry of collection.collection) {
+            // Each entry has an `identifier` and the toggle state is tracked
+            // via the prompt order list with `enabled` flags
+            const orderList = promptManager.getPromptOrderEntries();
+            if (orderList) {
+                for (const orderEntry of orderList) {
+                    if (orderEntry.identifier === entry.identifier) {
+                        snapshot.set(entry.identifier, orderEntry.enabled);
+                    }
+                }
+            }
+        }
+
+        log(`Snapshot captured: ${snapshot.size} prompt toggles`);
+    } catch (e) {
+        log('Error capturing snapshot:', e);
+    }
+    return snapshot;
+}
+
+/**
+ * Disable all prompt toggles (set enabled = false).
+ */
+function disableAllPromptToggles() {
+    try {
+        const ctx = SillyTavern.getContext();
+        const promptManager = ctx.promptManager;
+        if (!promptManager) return;
+
+        const orderList = promptManager.getPromptOrderEntries();
+        if (!orderList) return;
+
+        let count = 0;
+        for (const entry of orderList) {
+            if (entry.enabled) {
+                entry.enabled = false;
+                count++;
+            }
+        }
+
+        log(`Disabled ${count} prompt toggles`);
+    } catch (e) {
+        log('Error disabling prompt toggles:', e);
+    }
+}
+
+/**
+ * Restore prompt toggles from a previous snapshot.
+ */
+function restorePromptToggles(snapshot) {
+    if (!snapshot || snapshot.size === 0) return;
+
+    try {
+        const ctx = SillyTavern.getContext();
+        const promptManager = ctx.promptManager;
+        if (!promptManager) return;
+
+        const orderList = promptManager.getPromptOrderEntries();
+        if (!orderList) return;
+
+        let count = 0;
+        for (const entry of orderList) {
+            if (snapshot.has(entry.identifier)) {
+                entry.enabled = snapshot.get(entry.identifier);
+                count++;
+            }
+        }
+
+        log(`Restored ${count} prompt toggles`);
+    } catch (e) {
+        log('Error restoring prompt toggles:', e);
+    }
+}
+
 // ─── Core: LLM Summarization ────────────────────────────────────────
 
+/**
+ * Call the LLM with our context-aware summarizer prompt.
+ * Disables all Chat Completion prompt toggles for the duration of the call,
+ * then restores them afterward — so only our system prompt + user prompt are sent.
+ */
 async function callSummarizer(storyTxt, contextStr) {
     const { generateRaw } = SillyTavern.getContext();
     const s = getSettings();
 
     const prompt = s.summarizerUserPrompt
-        .replace('{{player_name}}', getPlayerName())
-        .replace('{{context_str}}', contextStr || '(none yet)')
-        .replace('{{story_txt}}', storyTxt);
+    .replace('{{player_name}}', getPlayerName())
+    .replace('{{context_str}}', contextStr || '(none yet)')
+    .replace('{{story_txt}}', storyTxt);
 
     log('── Summarizer Call ──');
     log('Context str length:', contextStr.length, 'chars');
     log('Story txt length:', storyTxt.length, 'chars');
+
+    // *** Snapshot and disable all prompt toggles ***
+    const snapshot = snapshotPromptToggles();
+    disableAllPromptToggles();
 
     try {
         const result = await generateRaw({
@@ -239,6 +363,9 @@ async function callSummarizer(storyTxt, contextStr) {
         console.error(LOG_PREFIX, 'Summarization failed:', err);
         toastr.error('Summaryception: summarization failed — check console.', '', { timeOut: 5000 });
         return '';
+    } finally {
+        // *** ALWAYS restore, even if the call fails ***
+        restorePromptToggles(snapshot);
     }
 }
 
