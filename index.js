@@ -655,38 +655,42 @@ async function runCatchup(visibleTurns, overflow) {
 
 async function showCatchupDialog(overflowCount, estimatedCalls) {
     return new Promise((resolve) => {
-        const dialogHtml = `
-        <div class="sc-catchup-dialog">
-        <p>Summaryception detected <strong>${overflowCount} unsummarized turns</strong>
-        in this chat (beyond your ${getSettings().verbatimTurns} verbatim limit).</p>
-        <p>This will require approximately <strong>${estimatedCalls} summarizer calls</strong> to process.</p>
-        <hr>
-        <div class="sc-catchup-options">
-        <button id="sc_catchup_full" class="menu_button">
-        <i class="fa-solid fa-forward-fast"></i>
-        Process Entire Backlog
-        <small>Summarize all ${overflowCount} turns (cancelable)</small>
-        </button>
-        <button id="sc_catchup_skip" class="menu_button">
-        <i class="fa-solid fa-forward-step"></i>
-        Skip Backlog
-        <small>Ignore old turns, only summarize new ones going forward</small>
-        </button>
-        <button id="sc_catchup_partial" class="menu_button">
-        <i class="fa-solid fa-play"></i>
-        Just One Batch
-        <small>Summarize ${getSettings().turnsPerSummary} turns now, deal with the rest later</small>
-        </button>
-        </div>
-        </div>
-        `;
+        const s = getSettings();
 
         const overlay = document.createElement('div');
         overlay.className = 'sc-catchup-overlay';
         overlay.innerHTML = `
         <div class="sc-catchup-modal">
         <h3>🧠 Summaryception — Backlog Detected</h3>
-        ${dialogHtml}
+        <div class="sc-catchup-dialog">
+        <p>Summaryception detected <strong>${overflowCount} unsummarized turns</strong>
+        in this chat (beyond your ${s.verbatimTurns} verbatim limit).</p>
+        <p>This will require approximately <strong>${estimatedCalls} summarizer calls</strong> to process.</p>
+        <hr>
+        <div class="sc-catchup-options">
+        <button id="sc_catchup_full" class="menu_button">
+        <i class="fa-solid fa-forward-fast"></i>
+        <div class="sc-btn-text">
+        <span class="sc-btn-label">Process Entire Backlog</span>
+        <span class="sc-btn-desc">Summarize all ${overflowCount} turns — cancelable at any time</span>
+        </div>
+        </button>
+        <button id="sc_catchup_skip" class="menu_button">
+        <i class="fa-solid fa-forward-step"></i>
+        <div class="sc-btn-text">
+        <span class="sc-btn-label">Skip Backlog</span>
+        <span class="sc-btn-desc">Ignore old turns, only summarize new ones going forward</span>
+        </div>
+        </button>
+        <button id="sc_catchup_partial" class="menu_button">
+        <i class="fa-solid fa-play"></i>
+        <div class="sc-btn-text">
+        <span class="sc-btn-label">Just One Batch</span>
+        <span class="sc-btn-desc">Summarize ${s.turnsPerSummary} turns now, deal with the rest later</span>
+        </div>
+        </button>
+        </div>
+        </div>
         </div>
         `;
         document.body.appendChild(overlay);

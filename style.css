@@ -193,25 +193,33 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    padding: 20px;
 }
 
 .sc-catchup-modal {
     background: var(--SmartThemeBlurTintColor, #1a1a2e);
     border: 1px solid var(--SmartThemeBorderColor, #444);
     border-radius: 12px;
-    padding: 24px;
-    max-width: 500px;
-    width: 90%;
+    padding: 28px;
+    max-width: 560px;
+    width: 100%;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
 }
 
 .sc-catchup-modal h3 {
     margin: 0 0 16px 0;
+    font-size: 1.15em;
 }
 
 .sc-catchup-dialog p {
     margin: 8px 0;
     line-height: 1.5;
+}
+
+.sc-catchup-dialog hr {
+    border: none;
+    border-top: 1px solid var(--SmartThemeBorderColor, #444);
+    margin: 16px 0;
 }
 
 .sc-catchup-options {
@@ -223,14 +231,39 @@
 
 .sc-catchup-options .menu_button {
     display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    padding: 12px 16px;
+    flex-direction: row;
+    align-items: center;
+    padding: 14px 18px;
     text-align: left;
-    gap: 4px;
+    gap: 14px;
+    width: 100%;
+    min-height: 56px;
+    box-sizing: border-box;
+    white-space: normal;
+    cursor: pointer;
 }
 
-.sc-catchup-options .menu_button small {
+.sc-catchup-options .menu_button i {
+    font-size: 1.3em;
+    flex-shrink: 0;
+    width: 24px;
+    text-align: center;
+}
+
+.sc-catchup-options .sc-btn-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.sc-catchup-options .sc-btn-label {
+    font-weight: bold;
+    font-size: 1em;
+}
+
+.sc-catchup-options .sc-btn-desc {
     opacity: 0.6;
-    font-size: 0.8em;
+    font-size: 0.82em;
+    line-height: 1.3;
 }
