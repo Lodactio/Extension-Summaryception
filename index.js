@@ -1029,6 +1029,12 @@ function registerSlashCommands() {
                 store.layers = [];
                 store.summarizedUpTo = -1;
                 await saveChatStore();
+                try {
+                    const ctx = SillyTavern.getContext();
+                    if (ctx.saveChat) await ctx.saveChat();
+                } catch (e) {
+                    log('Could not save chat:', e);
+                }
                 updateInjection();
                 updateUI();
                 return 'Summaryception memory cleared and messages unghosted.';
@@ -1201,14 +1207,20 @@ function bindUIEvents() {
         const store = getChatStore();
         const { chat } = SillyTavern.getContext();
         for (let i = 0; i < chat.length; i++) {
-            if (chat[i]._sc_ghosted) {
-                unhideMessage(i);
-                delete chat[i]._sc_ghosted;
+            if (chat[i]?.extra?.sc_ghosted) {
+                unghostMessage(i);
             }
         }
         store.layers = [];
         store.summarizedUpTo = -1;
         await saveChatStore();
+        // Save the chat to persist the unghosted state
+        try {
+            const ctx = SillyTavern.getContext();
+            if (ctx.saveChat) await ctx.saveChat();
+        } catch (e) {
+            log('Could not save chat:', e);
+        }
         updateInjection();
         updateUI();
         toastr.success('Memory cleared & messages unghosted', 'Summaryception');
@@ -1258,13 +1270,42 @@ function bindUIEvents() {
                     toastr.error('Invalid file format.');
                     return;
                 }
+
+                const { chat } = SillyTavern.getContext();
                 const store = getChatStore();
+
+                // First, unghost everything from the current state
+                for (let i = 0; i < chat.length; i++) {
+                    if (chat[i]?.extra?.sc_ghosted) {
+                        unghostMessage(i);
+                    }
+                }
+
+                // Load the imported data
                 store.layers = data.layers;
                 store.summarizedUpTo = data.summarizedUpTo ?? -1;
+
+                // Now ghost messages up to the imported summarizedUpTo
+                if (store.summarizedUpTo >= 0) {
+                    ghostMessagesUpTo(store.summarizedUpTo);
+                }
+
                 await saveChatStore();
+
+                try {
+                    const ctx = SillyTavern.getContext();
+                    if (ctx.saveChat) await ctx.saveChat();
+                } catch (e) {
+                    log('Could not save chat:', e);
+                }
+
                 updateInjection();
                 updateUI();
-                toastr.success('Memory imported', 'Summaryception');
+                toastr.success(
+                    `Memory imported. ${store.layers.reduce((sum, l) => sum + (l?.length || 0), 0)} snippets loaded, messages ghosted up to index ${store.summarizedUpTo}.`,
+                               'Summaryception',
+                               { timeOut: 4000 }
+                );
             } catch (err) {
                 console.error(LOG_PREFIX, err);
                 toastr.error('Import failed — check console.');
