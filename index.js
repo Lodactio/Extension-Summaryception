@@ -560,7 +560,7 @@ async function maybeSummarizeTurns() {
 
 // ─── Core: Single Batch Summarization ────────────────────────────────
 
-async function summarizeOneBatch(visibleTurns) {
+async function summarizeOneBatchFromTurns(visibleTurns) {
     const s = getSettings();
     const { chat } = SillyTavern.getContext();
     const store = getChatStore();
@@ -570,72 +570,47 @@ async function summarizeOneBatch(visibleTurns) {
 
     if (batch.length === 0) return false;
 
-    isSummarizing = true;
+    const startIdx = batch[0].index;
+    const endIdx = batch[batch.length - 1].index;
+
+    if (!store.layers[0]) store.layers[0] = [];
+    const passageStart = (store.layers[0].length === 0) ? 0 : startIdx;
+    if (passageStart === 0) {
+        log('First summary — including messages 0-1 in passage');
+    }
+
+    const storyTxt = buildPassageFromRange(chat, passageStart, endIdx);
+    if (!storyTxt.trim()) return false;
+
+    const contextStr = store.layers[0].map(sn => sn.text).join(' | ') || '(none yet)';
+
+    const summary = await callSummarizer(storyTxt, contextStr);
+
+    if (!summary) {
+        log('Summarization failed for batch, leaving turns intact for next attempt.');
+        return false;
+    }
+
+    store.layers[0].push({
+        text: summary,
+        turnRange: [passageStart, endIdx],
+        timestamp: Date.now(),
+    });
+
+    store.summarizedUpTo = Math.max(store.summarizedUpTo, endIdx);
+    await ghostMessagesUpTo(endIdx);
+
+    await maybePromoteLayer(0);
+    await saveChatStore();
 
     try {
-        const startIdx = batch[0].index;
-        const endIdx = batch[batch.length - 1].index;
-
-        log(`Summarizing ${batch.length} assistant turns (indices ${startIdx}–${endIdx})`);
-
-        const storyTxt = buildPassageFromRange(chat, startIdx, endIdx);
-        if (!storyTxt.trim()) return false;
-
-        if (!store.layers[0]) store.layers[0] = [];
-        const contextStr = store.layers[0].map(sn => sn.text).join(' | ');
-
-        toastr.info(`Summarizing ${batch.length} turn${batch.length > 1 ? 's' : ''}…`, 'Summaryception', {
-            timeOut: 3000,
-            progressBar: true,
-        });
-
-        const summary = await callSummarizer(storyTxt, contextStr);
-
-        if (!summary) {
-            log('Summarization failed for batch, leaving turns intact for next attempt.');
-            return false;
-        }
-
-        // ─── SAVE SNIPPET FIRST ───
-        // Critical: persist the snippet to metadata BEFORE ghosting.
-        // If the page reloads between saving and ghosting, worst case
-        // is a snippet exists for non-ghosted messages (harmless).
-        // The old order (ghost first) meant a reload could lose the
-        // snippet while messages were already hidden (data loss).
-        store.layers[0].push({
-            text: summary,
-            turnRange: [startIdx, endIdx],
-            timestamp: Date.now(),
-        });
-
-        store.summarizedUpTo = Math.max(store.summarizedUpTo, endIdx);
-
-        // Save metadata IMMEDIATELY — snippet is now persisted
-        await saveChatStore();
-
-        // NOW ghost the messages (safe — snippet is already saved)
-        await ghostMessagesUpTo(endIdx);
-
-        log(`Layer 0 now has ${store.layers[0].length} snippets`);
-
-        await maybePromoteLayer(0);
-
-        // Save again after potential promotion
-        await saveChatStore();
-
-        try {
-            const ctx = SillyTavern.getContext();
-            if (ctx.saveChat) await ctx.saveChat();
-        } catch (e) {
-            log('Could not save chat:', e);
-        }
-
-        toastr.success(`Summary saved (Layer 0: ${store.layers[0].length} snippets)`, 'Summaryception', { timeOut: 2000 });
-        return true;
-
-    } finally {
-        isSummarizing = false;
+        const ctx = SillyTavern.getContext();
+        if (ctx.saveChat) await ctx.saveChat();
+    } catch (e) {
+        log('Could not save chat:', e);
     }
+
+    return true;
 }
 
 // ─── Core: Inner Batch for Catchup ───────────────────────────────────
