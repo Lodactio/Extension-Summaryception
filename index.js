@@ -722,11 +722,51 @@ async function maybePromoteLayer(layerIndex) {
 
     log(`Layer ${layerIndex}: ${layer.length} snippets > limit ${s.snippetsPerLayer} → promoting`);
 
+    // Ensure destination layer exists
+    if (!store.layers[layerIndex + 1]) store.layers[layerIndex + 1] = [];
+    const destLayer = store.layers[layerIndex + 1];
+
+    // ─── Seed promotion ──────────────────────────────────────────
+    // If the destination layer is EMPTY, the oldest snippet from the
+    // source layer is promoted directly as a seed — no LLM call.
+    // This preserves maximum information as the foundational context
+    // for all future summaries in that layer.
+    if (destLayer.length === 0) {
+        const seed = layer.shift();
+
+        seed.promoted = true;
+        seed.seedFromLayer = layerIndex;
+
+        destLayer.push(seed);
+
+        log(`Seeded Layer ${layerIndex + 1} with oldest snippet from Layer ${layerIndex} (no LLM call)`);
+
+        toastr.info(
+            `Seeded Layer ${layerIndex + 1} from Layer ${layerIndex} (free promotion)`,
+                    'Summaryception',
+                    { timeOut: 2000 }
+        );
+
+        // Check if source layer STILL exceeds the limit after removing the seed
+        // (e.g. if multiple messages came in at once)
+        if (layer.length > s.snippetsPerLayer) {
+            await maybePromoteLayer(layerIndex);
+        }
+
+        // Check if destination layer now needs promotion too
+        if (destLayer.length > s.snippetsPerLayer) {
+            await maybePromoteLayer(layerIndex + 1);
+        }
+
+        return;
+    }
+
+    // ─── Normal promotion: summarize oldest N snippets ───────────
     const toMerge = layer.splice(0, s.snippetsPerPromotion);
     const storyTxt = toMerge.map(sn => sn.text).join(' | ');
 
-    if (!store.layers[layerIndex + 1]) store.layers[layerIndex + 1] = [];
-    const contextStr = store.layers[layerIndex + 1].map(sn => sn.text).join(' | ');
+    // Prior context = destination layer's existing snippets (includes the seed)
+    const contextStr = destLayer.map(sn => sn.text).join(' | ');
 
     toastr.info(
         `Promoting ${toMerge.length} snippets: Layer ${layerIndex} → Layer ${layerIndex + 1}`,
@@ -736,20 +776,27 @@ async function maybePromoteLayer(layerIndex) {
 
     const metaSummary = await callSummarizer(storyTxt, contextStr);
     if (!metaSummary) {
+        // Restore on failure
         layer.unshift(...toMerge);
         return;
     }
 
-    store.layers[layerIndex + 1].push({
+    destLayer.push({
         text: metaSummary,
         fromLayer: layerIndex,
         mergedCount: toMerge.length,
         timestamp: Date.now(),
     });
 
-    log(`Layer ${layerIndex + 1} now has ${store.layers[layerIndex + 1].length} snippets`);
+    log(`Layer ${layerIndex + 1} now has ${destLayer.length} snippets`);
 
-    await maybePromoteLayer(layerIndex + 1);
+    // Cascade: check both layers
+    if (layer.length > s.snippetsPerLayer) {
+        await maybePromoteLayer(layerIndex);
+    }
+    if (destLayer.length > s.snippetsPerLayer) {
+        await maybePromoteLayer(layerIndex + 1);
+    }
 }
 
 // ─── Core: Assemble Full Summary Block ──────────────────────────────
