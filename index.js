@@ -1092,7 +1092,7 @@ function updateSnippetBrowser() {
                 : '';
                 const seedStr = sn.promoted ? ' 🌱' : '';
                 html += `<div class="sc-snippet" data-layer="${i}" data-idx="${j}">
-                <span class="sc-snippet-text">${escapeHtml(sn.text)}</span>
+                <span class="sc-snippet-text" data-layer="${i}" data-idx="${j}" title="Click to edit">${escapeHtml(sn.text)}</span>
                 <span class="sc-snippet-meta">${rangeStr}${seedStr}</span>
                 <button class="sc-snippet-delete menu_button fa-solid fa-xmark" title="Delete this snippet"></button>
                 </div>`;
@@ -1103,6 +1103,50 @@ function updateSnippetBrowser() {
 
     $('#sc_snippet_browser').html(html);
 
+    // Edit snippet on click
+    $('.sc-snippet-text').off('click').on('click', function () {
+        const layerIdx = parseInt($(this).data('layer'));
+        const snippetIdx = parseInt($(this).data('idx'));
+        const layer = store.layers[layerIdx];
+        if (!layer || !layer[snippetIdx]) return;
+
+        const sn = layer[snippetIdx];
+        const textEl = $(this);
+
+        // Replace text with a textarea
+        const textarea = $('<textarea class="sc-snippet-edit"></textarea>')
+        .val(sn.text)
+        .on('keydown', async function (e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                const newText = $(this).val().trim();
+                if (newText) {
+                    sn.text = newText;
+                    await saveChatStore();
+                    updateInjection();
+                    toastr.success('Snippet updated', 'Summaryception', { timeOut: 1500 });
+                }
+                updateSnippetBrowser();
+            } else if (e.key === 'Escape') {
+                updateSnippetBrowser();
+            }
+        })
+        .on('blur', async function () {
+            const newText = $(this).val().trim();
+            if (newText && newText !== sn.text) {
+                sn.text = newText;
+                await saveChatStore();
+                updateInjection();
+                toastr.success('Snippet updated', 'Summaryception', { timeOut: 1500 });
+            }
+            updateSnippetBrowser();
+        });
+
+        textEl.replaceWith(textarea);
+        textarea.focus().select();
+    });
+
+    // Delete snippet
     $('.sc-snippet-delete').off('click').on('click', async function () {
         const layerIdx = parseInt($(this).closest('.sc-snippet').data('layer'));
         const snippetIdx = parseInt($(this).closest('.sc-snippet').data('idx'));
@@ -1111,14 +1155,13 @@ function updateSnippetBrowser() {
             layer.splice(snippetIdx, 1);
 
             // Recalculate summarizedUpTo from remaining Layer 0 snippets
-            const store2 = getChatStore();
-            if (store2.layers[0] && store2.layers[0].length > 0) {
-                const maxEnd = Math.max(...store2.layers[0]
+            if (store.layers[0] && store.layers[0].length > 0) {
+                const maxEnd = Math.max(...store.layers[0]
                 .filter(sn => sn.turnRange)
                 .map(sn => sn.turnRange[1]));
-                store2.summarizedUpTo = maxEnd;
+                store.summarizedUpTo = maxEnd;
             } else {
-                store2.summarizedUpTo = -1;
+                store.summarizedUpTo = -1;
             }
 
             await saveChatStore();
