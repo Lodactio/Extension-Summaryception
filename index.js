@@ -1159,6 +1159,61 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+/**
+ * Apply ghost visual indicators to all ghosted messages.
+ * Uses a short delay loop to catch dynamically rendered messages.
+ */
+function applyGhostVisuals() {
+    const { chat } = SillyTavern.getContext();
+    if (!chat) return;
+
+    for (let i = 0; i < chat.length; i++) {
+        const isGhosted = chat[i]?.extra?.sc_ghosted === true;
+        const messageElement = document.querySelector(`#chat .mes[mesid="${i}"]`);
+        if (!messageElement) continue;
+
+        if (isGhosted) {
+            messageElement.classList.add('sc-ghosted');
+        } else {
+            messageElement.classList.remove('sc-ghosted');
+        }
+    }
+}
+
+/**
+ * Set up a MutationObserver on the chat container to catch
+ * newly rendered messages and apply ghost visuals.
+ */
+function setupGhostObserver() {
+    const chatContainer = document.querySelector('#chat');
+    if (!chatContainer) {
+        // Chat container not ready yet, retry
+        setTimeout(setupGhostObserver, 500);
+        return;
+    }
+
+    const observer = new MutationObserver((mutations) => {
+        // Only react to added nodes (new messages rendered)
+        let hasNewMessages = false;
+        for (const mutation of mutations) {
+            if (mutation.addedNodes.length > 0) {
+                hasNewMessages = true;
+                break;
+            }
+        }
+        if (hasNewMessages) {
+            applyGhostVisuals();
+        }
+    });
+
+    observer.observe(chatContainer, {
+        childList: true,
+        subtree: false,
+    });
+
+    log('Ghost visual observer attached to #chat');
+}
+
 function bindUIEvents() {
     $('#sc_enabled').on('change', function () {
         getSettings().enabled = $(this).prop('checked');
@@ -1339,12 +1394,12 @@ function bindUIEvents() {
     eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
     eventSource.on(event_types.GENERATION_STARTED, onGenerationStarted);
 
-    // In the init function, add after bindUIEvents():
     setupGenerationInterceptor();
-
     registerSlashCommands();
 
     eventSource.on(event_types.APP_READY, () => {
+        setupGhostObserver();
+        applyGhostVisuals();
         updateInjection();
         updateUI();
         console.log(LOG_PREFIX, 'v3 loaded. Ghost mode — non-destructive layered summarization.');
