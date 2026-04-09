@@ -560,6 +560,78 @@ async function maybeSummarizeTurns() {
 
 // ─── Core: Single Batch Summarization ────────────────────────────────
 
+async function summarizeOneBatch(visibleTurns) {
+    const s = getSettings();
+    const { chat } = SillyTavern.getContext();
+    const store = getChatStore();
+
+    const batchSize = Math.min(s.turnsPerSummary, visibleTurns.length);
+    const batch = visibleTurns.slice(0, batchSize);
+
+    if (batch.length === 0) return false;
+
+    isSummarizing = true;
+
+    try {
+        const startIdx = batch[0].index;
+        const endIdx = batch[batch.length - 1].index;
+
+        log(`Summarizing ${batch.length} assistant turns (indices ${startIdx}–${endIdx})`);
+
+        if (!store.layers[0]) store.layers[0] = [];
+        const passageStart = (store.layers[0].length === 0) ? 0 : startIdx;
+        if (passageStart === 0) {
+            log('First summary — including messages 0-1 in passage');
+        }
+
+        const storyTxt = buildPassageFromRange(chat, passageStart, endIdx);
+        if (!storyTxt.trim()) return false;
+
+        const contextStr = store.layers[0].map(sn => sn.text).join(' | ') || '(none yet)';
+
+        toastr.info(`Summarizing ${batch.length} turn${batch.length > 1 ? 's' : ''}…`, 'Summaryception', {
+            timeOut: 3000,
+            progressBar: true,
+        });
+
+        const summary = await callSummarizer(storyTxt, contextStr);
+
+        if (!summary) {
+            log('Summarization failed for batch, leaving turns intact for next attempt.');
+            return false;
+        }
+
+        store.layers[0].push({
+            text: summary,
+            turnRange: [passageStart, endIdx],
+            timestamp: Date.now(),
+        });
+
+        store.summarizedUpTo = Math.max(store.summarizedUpTo, endIdx);
+        await ghostMessagesUpTo(endIdx);
+
+        log(`Layer 0 now has ${store.layers[0].length} snippets`);
+
+        await maybePromoteLayer(0);
+        await saveChatStore();
+
+        try {
+            const ctx = SillyTavern.getContext();
+            if (ctx.saveChat) await ctx.saveChat();
+        } catch (e) {
+            log('Could not save chat:', e);
+        }
+
+        toastr.success(`Summary saved (Layer 0: ${store.layers[0].length} snippets)`, 'Summaryception', { timeOut: 2000 });
+        return true;
+
+    } finally {
+        isSummarizing = false;
+    }
+}
+
+// ─── Core: Inner Batch for Catchup ───────────────────────────────────
+
 async function summarizeOneBatchFromTurns(visibleTurns) {
     const s = getSettings();
     const { chat } = SillyTavern.getContext();
@@ -598,67 +670,10 @@ async function summarizeOneBatchFromTurns(visibleTurns) {
     });
 
     store.summarizedUpTo = Math.max(store.summarizedUpTo, endIdx);
-    await ghostMessagesUpTo(endIdx);
 
-    await maybePromoteLayer(0);
     await saveChatStore();
-
-    try {
-        const ctx = SillyTavern.getContext();
-        if (ctx.saveChat) await ctx.saveChat();
-    } catch (e) {
-        log('Could not save chat:', e);
-    }
-
-    return true;
-}
-
-// ─── Core: Inner Batch for Catchup ───────────────────────────────────
-
-async function summarizeOneBatchFromTurns(visibleTurns) {
-    const s = getSettings();
-    const { chat } = SillyTavern.getContext();
-    const store = getChatStore();
-
-    const batchSize = Math.min(s.turnsPerSummary, visibleTurns.length);
-    const batch = visibleTurns.slice(0, batchSize);
-
-    if (batch.length === 0) return false;
-
-    const startIdx = batch[0].index;
-    const endIdx = batch[batch.length - 1].index;
-
-    const storyTxt = buildPassageFromRange(chat, startIdx, endIdx);
-    if (!storyTxt.trim()) return false;
-
-    if (!store.layers[0]) store.layers[0] = [];
-    const contextStr = store.layers[0].map(sn => sn.text).join(' | ');
-
-    const summary = await callSummarizer(storyTxt, contextStr);
-
-    if (!summary) {
-        log('Summarization failed for batch, leaving turns intact for next attempt.');
-        return false;
-    }
-
-    // ─── SAVE SNIPPET FIRST ───
-    store.layers[0].push({
-        text: summary,
-        turnRange: [startIdx, endIdx],
-        timestamp: Date.now(),
-    });
-
-    store.summarizedUpTo = Math.max(store.summarizedUpTo, endIdx);
-
-    // Persist snippet BEFORE ghosting
-    await saveChatStore();
-
-    // NOW ghost (safe — snippet is persisted)
     await ghostMessagesUpTo(endIdx);
-
     await maybePromoteLayer(0);
-
-    // Save again after potential promotion
     await saveChatStore();
 
     try {
