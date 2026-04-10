@@ -957,7 +957,9 @@ function updateInjection() {
             return;
         }
 
-        const depth = s.verbatimTurns;
+        // Depth counts ALL messages, not just assistant.
+        // Multiply by 2 to account for user+assistant alternation.
+        const depth = s.verbatimTurns * 2;
         setExtensionPrompt(MODULE_NAME, summaryBlock, 1, depth, false, 0);
 
         log(`Injection updated: ${summaryBlock.length} chars at depth ${depth}`);
