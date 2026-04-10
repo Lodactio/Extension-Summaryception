@@ -6,7 +6,7 @@
     "js": "index.js",
     "css": "style.css",
     "author": "Lodactio",
-    "version": "4.1.5",
+    "version": "4.1.6",
     "homePage": "https://github.com/Lodactio/Extension-Summaryception",
     "auto_update": true
 }

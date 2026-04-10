@@ -276,7 +276,7 @@ function buildPassageFromRange(chat, startIdx, endIdx) {
     for (let i = startIdx; i <= endIdx; i++) {
         const m = chat[i];
         if (m && m.mes && m.mes.trim()) {
-            const speaker = m.is_user ? (m.name || getPlayerName()) : (m.name || 'Assistant');
+            const speaker = m.is_user ? 'Player' : 'Assistant';
             lines.push(`${speaker}: ${m.mes.trim()}`);
         }
     }
