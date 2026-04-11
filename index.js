@@ -302,6 +302,29 @@ function buildPassageFromRange(chat, startIdx, endIdx) {
     return lines.join('\n');
 }
 
+/**
+ * Build a full context string from all layers down to (and including) a target layer.
+ * Deepest layers first, target layer last — gives the summarizer full awareness
+ * of what's already been captured so it can avoid redundancy.
+ *
+ * @param {number} downToLayer - Include this layer and all layers above it
+ * @returns {string} - Combined context string, or '(none yet)'
+ */
+function buildFullContext(downToLayer = 0) {
+    const store = getChatStore();
+    const parts = [];
+
+    for (let i = store.layers.length - 1; i >= downToLayer; i--) {
+        const layer = store.layers[i];
+        if (!layer || layer.length === 0) continue;
+        for (const sn of layer) {
+            parts.push(sn.text);
+        }
+    }
+
+    return parts.length > 0 ? parts.join(' ') : '(none yet)';
+}
+
 // ─── Prompt Toggle Management ────────────────────────────────────────
 
 function snapshotPromptToggles() {
@@ -612,7 +635,7 @@ async function summarizeOneBatch(visibleTurns) {
         const storyTxt = buildPassageFromRange(chat, passageStart, endIdx);
         if (!storyTxt.trim()) return false;
 
-        const contextStr = store.layers[0].map(sn => sn.text).join(' | ') || '(none yet)';
+        const contextStr = buildFullContext(0);
 
         toastr.info(`Summarizing ${batch.length} turn${batch.length > 1 ? 's' : ''}…`, 'Summaryception', {
             timeOut: 3000,
@@ -679,7 +702,7 @@ async function summarizeOneBatchFromTurns(visibleTurns) {
     const storyTxt = buildPassageFromRange(chat, passageStart, endIdx);
     if (!storyTxt.trim()) return false;
 
-    const contextStr = store.layers[0].map(sn => sn.text).join(' | ') || '(none yet)';
+    const contextStr = buildFullContext(0);
 
     const summary = await callSummarizer(storyTxt, contextStr);
 
@@ -905,8 +928,8 @@ async function maybePromoteLayer(layerIndex) {
 
     // Normal promotion: summarize oldest N snippets
     const toMerge = layer.splice(0, s.snippetsPerPromotion);
-    const storyTxt = toMerge.map(sn => sn.text).join(' | ');
-    const contextStr = destLayer.map(sn => sn.text).join(' | ');
+    const storyTxt = toMerge.map(sn => sn.text).join(' ');
+    const contextStr = buildFullContext(layerIndex + 1);
 
     toastr.info(
         `Promoting ${toMerge.length} snippets: Layer ${layerIndex} → Layer ${layerIndex + 1}`,
@@ -1786,6 +1809,6 @@ async function fetchProfilesFallback(selectElement, currentValue) {
     eventSource.on(event_types.APP_READY, () => {
         updateInjection();
         updateUI();
-        console.log(LOG_PREFIX, 'v5.0.2 loaded. Connection Settings available');
+        console.log(LOG_PREFIX, 'v5.0.3 loaded. Connection Settings available');
     });
 })();
