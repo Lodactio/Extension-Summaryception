@@ -1,5 +1,5 @@
 /**
- * Summaryception v5.1.4 — Layered Recursive Summarization for SillyTavern
+ * Summaryception v5.1.5 — Layered Recursive Summarization for SillyTavern
  *
  * NON-DESTRUCTIVE: Uses SillyTavern's native /hide and /unhide commands
  * to exclude summarized messages from LLM context while keeping them
@@ -452,6 +452,20 @@ function cleanSummarizerOutput(raw) {
     return text;
 }
 
+// ─── Core: Summarization State ───────────────────────────────────────
+
+let isSummarizing = false;
+let catchupDismissed = false;
+let currentAbortController = null;
+
+function abortSummarization() {
+    if (currentAbortController) {
+        currentAbortController.abort();
+        log('Abort signal sent.');
+    }
+    isSummarizing = false;
+}
+
 // ─── Core: LLM Summarization with Retry ──────────────────────────────
 
 async function callSummarizer(storyTxt, contextStr) {
@@ -466,31 +480,44 @@ async function callSummarizer(storyTxt, contextStr) {
     log('Context str length:', contextStr.length, 'chars');
     log('Story txt length:', storyTxt.length, 'chars');
 
-    // Only snapshot/restore prompt toggles for 'default' mode
-    // (other modes bypass ST's prompt pipeline entirely)
     const isDefaultMode = !s.connectionSource || s.connectionSource === 'default';
     const snapshot = isDefaultMode ? snapshotPromptToggles() : null;
     if (isDefaultMode) disableAllPromptToggles();
+
+    // Create abort controller for this summarization call
+    currentAbortController = new AbortController();
+    const { signal } = currentAbortController;
 
     let lastError = null;
 
     try {
         for (let attempt = 0; attempt <= RETRY_CONFIG.maxRetries; attempt++) {
+            // Check if aborted before each attempt
+            if (signal.aborted) {
+                log('Summarization aborted by user.');
+                toastr.warning('Summarization aborted.', 'Summaryception', { timeOut: 3000 });
+                return '';
+            }
+
             try {
                 if (attempt > 0) {
                     log(`Retry attempt ${attempt}/${RETRY_CONFIG.maxRetries}`);
                 }
 
-                // ─── THIS IS THE KEY CHANGE ───
-                const result = await sendSummarizerRequest(
-                    s,                          // full settings object
-                    s.summarizerSystemPrompt,    // system prompt
-                    prompt                       // user prompt
-                );
+                // Race the request against a timeout and the abort signal
+                const timeoutMs = 120000; // 2 minutes
+                const result = await Promise.race([
+                    sendSummarizerRequest(s, s.summarizerSystemPrompt, prompt),
+                                                  new Promise((_, reject) => {
+                                                      const timer = setTimeout(() => reject(new Error('Request timed out after 120s')), timeoutMs);
+                                                      signal.addEventListener('abort', () => {
+                                                          clearTimeout(timer);
+                                                          reject(new Error('Aborted by user'));
+                                                      });
+                                                  }),
+                ]);
 
                 let trimmed = (result || '').trim();
-
-                // Clean reasoning tags and model artifacts
                 trimmed = cleanSummarizerOutput(trimmed);
 
                 if (!trimmed) {
@@ -503,6 +530,13 @@ async function callSummarizer(storyTxt, contextStr) {
 
             } catch (err) {
                 lastError = err;
+
+                // Abort is never retryable
+                if (signal.aborted || err.message === 'Aborted by user') {
+                    log('Summarization aborted by user.');
+                    toastr.warning('Summarization aborted.', 'Summaryception', { timeOut: 3000 });
+                    return '';
+                }
 
                 if (!isRetryableError(err)) {
                     console.error(LOG_PREFIX, 'Non-retryable error:', err);
@@ -536,7 +570,14 @@ async function callSummarizer(storyTxt, contextStr) {
                                { timeOut: delay }
                 );
 
-                await sleep(delay);
+                // Abortable sleep
+                await new Promise((resolve, reject) => {
+                    const timer = setTimeout(resolve, delay);
+                    signal.addEventListener('abort', () => {
+                        clearTimeout(timer);
+                        resolve(); // resolve, not reject — the abort check at loop top handles it
+                    });
+                });
             }
         }
 
@@ -550,16 +591,12 @@ async function callSummarizer(storyTxt, contextStr) {
         return '';
 
     } finally {
+        currentAbortController = null;
         if (isDefaultMode && snapshot) {
             restorePromptToggles(snapshot);
         }
     }
 }
-
-// ─── Core: Summarization State ───────────────────────────────────────
-
-let isSummarizing = false;
-let catchupDismissed = false;
 
 // ─── Core: Summarize Oldest Verbatim Turns ──────────────────────────
 
@@ -772,7 +809,10 @@ async function runCatchup(visibleTurns, overflow) {
                                           extendedTimeOut: 0,
                                           tapToDismiss: false,
                                           closeButton: true,
-                                          onCloseClick: () => { cancelled = true; },
+                                          onCloseClick: () => {
+                                              cancelled = true;
+                                              abortSummarization();
+                                          },
                                       }
     );
 
@@ -1574,6 +1614,18 @@ function bindUIEvents() {
         }
     });
 
+    $('#sc_stop_summarize').on('click', function () {
+        if (!isSummarizing && !currentAbortController) {
+            toastr.info('Nothing is running.', 'Summaryception');
+            return;
+        }
+        abortSummarization();
+        toastr.warning('Summarization stopped. Progress has been saved.', 'Summaryception', { timeOut: 4000 });
+        $(this).prop('disabled', true);
+        setTimeout(() => $(this).prop('disabled', false), 2000);
+        updateUI();
+    });
+
     $('#sc_refresh_preview').on('click', () => updateUI());
 
     $('#sc_export').on('click', function () {
@@ -1922,6 +1974,6 @@ async function fetchProfilesFallback(selectElement, currentValue) {
     eventSource.on(event_types.APP_READY, () => {
         updateInjection();
         updateUI();
-        console.log(LOG_PREFIX, 'v5.1.4 loaded. Connection Settings available');
+        console.log(LOG_PREFIX, 'v5.1.5 loaded. Connection Settings available');
     });
 })();
