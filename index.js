@@ -1,5 +1,5 @@
 /**
- * Summaryception v5.2.4 — Layered Recursive Summarization for SillyTavern
+ * Summaryception v5.3.0 — Layered Recursive Summarization for SillyTavern
  *
  * NON-DESTRUCTIVE: Uses SillyTavern's native /hide and /unhide commands
  * to exclude summarized messages from LLM context while keeping them
@@ -41,11 +41,13 @@ const defaultSettings = Object.freeze({
 
     Summarize only the necessary elements from the passage_in_question to coherently continue the prior_context.
 
-    Focus on: story progression, plot points, plans, tasks, quests; location changes and current location (reference by name); location interactables encountered, used, or discovered; significant changes to player, NPCs, locations, date/time, world, or setting.
+    Focus on: character interactions, dialogue tone, and relationship dynamics; emotional beats and character motivations; atmosphere, mood, and sensory details that establish tone; narrative themes and subtext; names, places, and time references; plot developments and unresolved tensions; details that distinguish this moment from any other.
 
     Exclude anything insubstantial, fluff, atmospheric details, or events already covered in Prior Context.
     Skip any passages that are empty, unclear, or lack significant content.
     Write in short phrases, no more than 20; output must be a single line:`,
+
+    promptPreset: 'narrative',  // 'narrative' | 'gamestate' | 'custom'
 
     stripPatterns: [
         '<|channel>thought',
@@ -70,6 +72,38 @@ const defaultSettings = Object.freeze({
     openaiModel: '',
     openaiMaxTokens: 0,                   // 0 = no limit (provider default)
 });
+
+// ─── Prompt Presets ──────────────────────────────────────────────────
+
+const PROMPT_PRESETS = {
+    narrative: `<player_name>{{player_name}}</player_name>
+    <prior_context>{{context_str}}</prior_context>
+    <passage_in_question>{{story_txt}}</passage_in_question>
+
+    Summarize only the necessary elements from the passage_in_question to coherently continue the prior_context.
+
+    Focus on: character interactions, dialogue tone, and relationship dynamics; emotional beats and character motivations; atmosphere, mood, and sensory details that establish tone; narrative themes and subtext; names, places, and time references; plot developments and unresolved tensions; details that distinguish this moment from any other.
+
+    Exclude anything insubstantial, fluff, atmospheric details, or events already covered in Prior Context.
+    Skip any passages that are empty, unclear, or lack significant content.
+    Write in short phrases, no more than 20; output must be a single line:`,
+
+    gamestate: `<player_name>{{player_name}}</player_name>
+    <prior_context>{{context_str}}</prior_context>
+    <passage_in_question>{{story_txt}}</passage_in_question>
+
+    Summarize only the necessary elements from the passage_in_question to coherently continue the prior_context.
+
+    Focus on: story progression, plot points, plans, tasks, quests; location changes and current location (reference by name); location interactables encountered, used, or discovered; significant changes to player, NPCs, locations, world, or setting.
+
+    Exclude anything insubstantial, fluff, atmospheric details, or events already covered in Prior Context.
+    Skip any passages that are empty, unclear, or lack significant content.
+    Write in short phrases, no more than 20; output must be a single line:`,
+
+    custom: null, // Uses whatever is in the textarea
+};
+
+const DEFAULT_PROMPT_PRESET = 'narrative';
 
 // ─── Retry Configuration ─────────────────────────────────────────────
 
@@ -1235,6 +1269,26 @@ function updateUI() {
         $('#sc_injection_template').val(s.injectionTemplate);
         $('#sc_summarizer_system_prompt').val(s.summarizerSystemPrompt);
         $('#sc_summarizer_user_prompt').val(s.summarizerUserPrompt);
+        // ── Prompt preset migration & sync ──
+        // Migration: existing users with the old game-state default get upgraded to narrative.
+        // Users who customized their prompt get marked as 'custom'.
+        if (!s.promptPreset) {
+            const currentPrompt = (s.summarizerUserPrompt || '').trim();
+            const gameStatePrompt = PROMPT_PRESETS.gamestate.trim();
+
+            if (!currentPrompt || currentPrompt === gameStatePrompt) {
+                // User had the old default — upgrade to narrative
+                s.promptPreset = 'narrative';
+                s.summarizerUserPrompt = PROMPT_PRESETS.narrative;
+                saveSettings();
+            } else {
+                // User customized their prompt — mark as custom
+                s.promptPreset = 'custom';
+                saveSettings();
+            }
+        }
+
+        $('#sc_prompt_preset').val(s.promptPreset);
         $('#sc_debug_mode').prop('checked', s.debugMode);
         $('#sc_strip_patterns').val((s.stripPatterns || []).join('\n'));
         $('#sc_summarizer_response_length').val(s.summarizerResponseLength || 0);
@@ -1504,7 +1558,6 @@ function bindUIEvents() {
     const textareas = [
         { id: '#sc_injection_template', key: 'injectionTemplate' },
         { id: '#sc_summarizer_system_prompt', key: 'summarizerSystemPrompt' },
-        { id: '#sc_summarizer_user_prompt', key: 'summarizerUserPrompt' },
     ];
 
     for (const ta of textareas) {
@@ -1711,6 +1764,42 @@ function bindUIEvents() {
             }
         };
         input.click();
+    });
+
+    // ── Prompt Preset dropdown ──
+    $('#sc_prompt_preset').on('change', function () {
+        const selected = $(this).val();
+        const s = getSettings();
+        s.promptPreset = selected;
+
+        if (selected !== 'custom') {
+            // Overwrite textarea with the selected preset
+            const presetText = PROMPT_PRESETS[selected];
+            $('#sc_summarizer_user_prompt').val(presetText);
+            s.summarizerUserPrompt = presetText;
+        }
+        // 'custom' leaves the textarea untouched for user editing
+
+        saveSettings();
+    });
+
+    // Auto-switch to 'custom' when user manually edits the prompt textarea
+    $('#sc_summarizer_user_prompt').on('input', function () {
+        const currentText = $(this).val();
+        const s = getSettings();
+
+        // Always sync the prompt text
+        s.summarizerUserPrompt = currentText;
+
+        if (s.promptPreset !== 'custom') {
+            const presetText = PROMPT_PRESETS[s.promptPreset];
+            if (currentText !== presetText) {
+                s.promptPreset = 'custom';
+                $('#sc_prompt_preset').val('custom');
+            }
+        }
+
+        saveSettings();
     });
 }
 
@@ -2005,6 +2094,6 @@ async function fetchProfilesFallback(selectElement, currentValue) {
     eventSource.on(event_types.APP_READY, () => {
         updateInjection();
         updateUI();
-        console.log(LOG_PREFIX, 'v5.2.4 loaded. Connection Settings available');
+        console.log(LOG_PREFIX, 'v5.3.0 loaded. Connection Settings available');
     });
 })();
