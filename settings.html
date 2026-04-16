@@ -14,6 +14,23 @@
                 </label>
             </div>
 
+            <!-- ═══ Enable ═══ -->
+            <div class="sc-row">
+                <label class="checkbox_label" for="sc_enabled">
+                    <input type="checkbox" id="sc_enabled" />
+                    <span>Enable Summaryception</span>
+                </label>
+            </div>
+
+            <!-- ═══ Pause ═══ -->
+            <div class="sc-row">
+                <label class="checkbox_label" for="sc_pause_summarization">
+                    <input type="checkbox" id="sc_pause_summarization" />
+                    <span>Pause Summarization</span>
+                    <small class="sc-hint">Stop processing new turns while keeping existing summaries injected. Preserves prompt cache hits. Unpause or use Force Summarize to catch up.</small>
+                </label>
+            </div>
+
             <!-- ═══ Actions ═══ -->
             <div class="sc-button-row">
                 <button id="sc_force_summarize" class="menu_button">

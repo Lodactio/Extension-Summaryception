@@ -1,5 +1,5 @@
 /**
- * Summaryception v5.3.0 — Layered Recursive Summarization for SillyTavern
+ * Summaryception v5.3.1 — Layered Recursive Summarization for SillyTavern
  *
  * NON-DESTRUCTIVE: Uses SillyTavern's native /hide and /unhide commands
  * to exclude summarized messages from LLM context while keeping them
@@ -48,6 +48,7 @@ const defaultSettings = Object.freeze({
     Write in short phrases, no more than 20; output must be a single line:`,
 
     promptPreset: 'narrative',  // 'narrative' | 'gamestate' | 'custom'
+    pauseSummarization: false,  // true = stop processing, keep injecting
 
     stripPatterns: [
         '<|channel>thought',
@@ -684,6 +685,7 @@ async function callSummarizer(storyTxt, contextStr) {
 async function maybeSummarizeTurns() {
     const s = getSettings();
     if (!s.enabled) return;
+    if (s.pauseSummarization) return;  // ← new
     if (isSummarizing) return;
 
     const { chat } = SillyTavern.getContext();
@@ -1256,6 +1258,7 @@ function updateUI() {
         const store = getChatStore();
 
         $('#sc_enabled').prop('checked', s.enabled);
+        $('#sc_pause_summarization').prop('checked', s.pauseSummarization);
         $('#sc_verbatim_turns').val(s.verbatimTurns);
         $('#sc_verbatim_turns_val').text(s.verbatimTurns);
         $('#sc_turns_per_summary').val(s.turnsPerSummary);
@@ -1526,6 +1529,26 @@ function bindUIEvents() {
         updateInjection();
     });
 
+    $('#sc_pause_summarization').on('change', function () {
+        const s = getSettings();
+        s.pauseSummarization = $(this).prop('checked');
+        saveSettings();
+
+        if (s.pauseSummarization) {
+            toastr.info(
+                'Summarization paused. Existing summaries will continue to be injected. Use Force Summarize or unpause to catch up.',
+                'Summaryception',
+                { timeOut: 5000 }
+            );
+        } else {
+            toastr.info(
+                'Summarization resumed. Will process new turns automatically.',
+                'Summaryception',
+                { timeOut: 3000 }
+            );
+        }
+    });
+
     $('#sc_summarizer_response_length').on('input', function () {
         getSettings().summarizerResponseLength = parseInt($(this).val(), 10) || 0;
         saveSettings();
@@ -1665,6 +1688,9 @@ function bindUIEvents() {
         if (isSummarizing) {
             toastr.warning('Already summarizing. Please wait.');
             return;
+        }
+        if (s.pauseSummarization) {
+            log('Force Summarize overrides pause mode.');
         }
         $(this).prop('disabled', true).text(' Working…');
         try {
@@ -2094,6 +2120,6 @@ async function fetchProfilesFallback(selectElement, currentValue) {
     eventSource.on(event_types.APP_READY, () => {
         updateInjection();
         updateUI();
-        console.log(LOG_PREFIX, 'v5.3.0 loaded. Connection Settings available');
+        console.log(LOG_PREFIX, 'v5.3.1 loaded. Connection Settings available');
     });
 })();
