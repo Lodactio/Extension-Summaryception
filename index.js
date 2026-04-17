@@ -171,7 +171,9 @@ function log(...args) {
 function trace(...args) {
     const s = getSettings();
     if (s.debugMode && s.traceMode) {
-        const normalized = args.map(arg => typeof arg === 'string' ? arg.toUpperCase() : arg);
+        const normalized = args.map((arg, idx) => (idx === 0 && typeof arg === 'string')
+            ? arg.toUpperCase()
+            : arg);
         console.log(LOG_PREFIX, '[TRACE]', ...normalized);
     }
 }
