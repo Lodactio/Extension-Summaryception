@@ -60,6 +60,7 @@ const defaultSettings = Object.freeze({
     ],
 
     debugMode: false,
+    traceMode: false,
 
     // ─── Connection Settings ─────────────────────────────────────
     connectionSource: 'default',          // 'default' | 'profile' | 'ollama' | 'openai'
@@ -164,6 +165,45 @@ function isRetryableError(error) {
 
 function log(...args) {
     if (getSettings().debugMode) console.log(LOG_PREFIX, ...args);
+}
+
+function trace(...args) {
+    const s = getSettings();
+    if (s.debugMode && s.traceMode) console.log(LOG_PREFIX, '[TRACE]', ...args);
+}
+
+async function repairGhostingForRange(endIndex) {
+    if (!Number.isInteger(endIndex) || endIndex < 0) return 0;
+
+    const { chat } = SillyTavern.getContext();
+    const store = getChatStore();
+    const upperBound = Math.min(endIndex, chat.length - 1);
+    let repaired = 0;
+
+    for (let i = 0; i <= upperBound; i++) {
+        const msg = chat[i];
+        if (!msg) continue;
+        if (msg.is_system) continue;
+        if (msg.extra?.sc_ghosted) continue;
+        if (msg.is_hidden) continue;
+
+        if (!msg.extra) msg.extra = {};
+        msg.extra.sc_ghosted = true;
+
+        if (!store.ghostedIndices.includes(i)) {
+            store.ghostedIndices.push(i);
+        }
+
+        try {
+            await SillyTavern.getContext().executeSlashCommandsWithOptions(`/hide ${i}`, { showOutput: false });
+        } catch (e) {
+            log(`Failed to repair-hide message ${i}:`, e);
+        }
+
+        repaired++;
+    }
+
+    return repaired;
 }
 
 function getSettings() {
@@ -556,6 +596,10 @@ function abortSummarization() {
 // ─── Core: LLM Summarization with Retry ──────────────────────────────
 
 async function callSummarizer(storyTxt, contextStr) {
+    trace('callSummarizer entered', {
+        storyLength: storyTxt?.length ?? 0,
+        contextLength: contextStr?.length ?? 0,
+    });
     const s = getSettings();
 
     const prompt = s.summarizerUserPrompt
@@ -578,6 +622,7 @@ async function callSummarizer(storyTxt, contextStr) {
 
     try {
         for (let attempt = 0; attempt <= RETRY_CONFIG.maxRetries; attempt++) {
+            trace('callSummarizer attempt', { attempt, maxRetries: RETRY_CONFIG.maxRetries });
             if (signal.aborted) {
                 log('Summarization aborted by user.');
                 toastr.warning('Summarization aborted.', 'Summaryception', { timeOut: 3000 });
@@ -610,10 +655,17 @@ async function callSummarizer(storyTxt, contextStr) {
                 }
 
                 log('Result:', trimmed);
+                trace('callSummarizer success', { attempt, resultLength: trimmed.length });
                 return trimmed;
 
             } catch (err) {
                 lastError = err;
+                trace('callSummarizer error', {
+                    attempt,
+                    name: err?.name,
+                    status: err?.status || err?.response?.status || '',
+                    message: err?.message || String(err),
+                });
 
                 if (signal.aborted || err.message === 'Aborted by user') {
                     log('Summarization aborted by user.');
@@ -665,6 +717,7 @@ async function callSummarizer(storyTxt, contextStr) {
 
         const status = lastError?.status || lastError?.response?.status || '';
         console.error(LOG_PREFIX, 'Summarization failed after all retries:', lastError);
+        trace('callSummarizer failed', { status });
         toastr.error(
             `Summarization failed after ${RETRY_CONFIG.maxRetries} retries${status ? ` (${status})` : ''}. Batch skipped — will retry on next trigger.`,
                      'Summaryception',
@@ -759,14 +812,31 @@ async function summarizeOneBatch(visibleTurns) {
     try {
         const startIdx = batch[0].index;
         const endIdx = batch[batch.length - 1].index;
+        trace('summarizeOneBatch start', { startIdx, endIdx, summarizedUpTo: store.summarizedUpTo });
+
+        if (startIdx <= store.summarizedUpTo) {
+            log(`Skipping batch (${startIdx}–${endIdx}) because it is already summarized up to ${store.summarizedUpTo}.`);
+            trace('summarizeOneBatch skipped: already summarized');
+            return false;
+        }
 
         log(`Summarizing ${batch.length} assistant turns (indices ${startIdx}–${endIdx})`);
 
         if (!store.layers[0]) store.layers[0] = [];
         const passageStart = store.summarizedUpTo < 0 ? 0 : store.summarizedUpTo + 1;
+        trace('summarizeOneBatch passage range', { passageStart, endIdx });
+
+        if (passageStart > endIdx) {
+            log(`Invalid passage range (${passageStart} > ${endIdx}), skipping batch.`);
+            trace('summarizeOneBatch skipped: invalid range');
+            return false;
+        }
 
         const storyTxt = buildPassageFromRange(chat, passageStart, endIdx);
-        if (!storyTxt.trim()) return false;
+        if (!storyTxt.trim()) {
+            trace('summarizeOneBatch skipped: empty story text');
+            return false;
+        }
 
         const contextStr = buildFullContext(0);
 
@@ -814,54 +884,81 @@ async function summarizeOneBatch(visibleTurns) {
 // ─── Core: Inner Batch for Catchup ───────────────────────────────────
 
 async function summarizeOneBatchFromTurns(visibleTurns) {
-    const s = getSettings();
-    const { chat } = SillyTavern.getContext();
-    const store = getChatStore();
+    trace('summarizeOneBatchFromTurns entered', { visibleTurns: visibleTurns?.length ?? 0 });
+    try {
+        const s = getSettings();
+        const { chat } = SillyTavern.getContext();
+        const store = getChatStore();
 
-    const batchSize = Math.min(s.turnsPerSummary, visibleTurns.length);
-    const batch = visibleTurns.slice(0, batchSize);
+        const batchSize = Math.min(s.turnsPerSummary, visibleTurns.length);
+        const batch = visibleTurns.slice(0, batchSize);
+        trace('summarizeOneBatchFromTurns batch', { batchSize, actual: batch.length });
 
-    if (batch.length === 0) return false;
+        if (batch.length === 0) return false;
 
-    const startIdx = batch[0].index;
-    const endIdx = batch[batch.length - 1].index;
+        const startIdx = batch[0].index;
+        const endIdx = batch[batch.length - 1].index;
+        trace('summarizeOneBatchFromTurns range', { startIdx, endIdx, summarizedUpTo: store.summarizedUpTo });
 
-    if (!store.layers[0]) store.layers[0] = [];
-    const passageStart = store.summarizedUpTo < 0 ? 0 : store.summarizedUpTo + 1;
+        if (startIdx <= store.summarizedUpTo) {
+            log(`Skipping batch (${startIdx}–${endIdx}) because it is already summarized up to ${store.summarizedUpTo}.`);
+            trace('summarizeOneBatchFromTurns skipped: already summarized');
+            return false;
+        }
 
-    const storyTxt = buildPassageFromRange(chat, passageStart, endIdx);
-    if (!storyTxt.trim()) return false;
+        if (!store.layers[0]) store.layers[0] = [];
+        const passageStart = store.summarizedUpTo < 0 ? 0 : store.summarizedUpTo + 1;
+        trace('summarizeOneBatchFromTurns passage range', { passageStart, endIdx });
 
-    const contextStr = buildFullContext(0);
+        if (passageStart > endIdx) {
+            log(`Invalid passage range (${passageStart} > ${endIdx}), skipping batch.`);
+            trace('summarizeOneBatchFromTurns skipped: invalid range');
+            return false;
+        }
 
-    const summary = await callSummarizer(storyTxt, contextStr);
+        const storyTxt = buildPassageFromRange(chat, passageStart, endIdx);
+        if (!storyTxt.trim()) {
+            trace('summarizeOneBatchFromTurns skipped: empty story text');
+            return false;
+        }
 
-    if (!summary) {
-        log('Summarization failed for batch, leaving turns intact for next attempt.');
+        const contextStr = buildFullContext(0);
+
+        const summary = await callSummarizer(storyTxt, contextStr);
+
+        if (!summary) {
+            log('Summarization failed for batch, leaving turns intact for next attempt.');
+            trace('summarizeOneBatchFromTurns failed: empty summary');
+            return false;
+        }
+
+        store.layers[0].push({
+            text: summary,
+            turnRange: [passageStart, endIdx],
+            timestamp: Date.now(),
+        });
+
+        store.summarizedUpTo = Math.max(store.summarizedUpTo, endIdx);
+
+        await saveChatStore();
+        await ghostMessagesUpTo(endIdx);
+        await maybePromoteLayer(0);
+        await saveChatStore();
+
+        try {
+            const ctx = SillyTavern.getContext();
+            if (ctx.saveChat) await ctx.saveChat();
+        } catch (e) {
+            log('Could not save chat:', e);
+        }
+
+        trace('summarizeOneBatchFromTurns success', { endIdx, summarizedUpTo: store.summarizedUpTo });
+        return true;
+    } catch (e) {
+        console.error(LOG_PREFIX, 'Unexpected error in summarizeOneBatchFromTurns:', e);
+        trace('summarizeOneBatchFromTurns exception', { error: e?.message || String(e) });
         return false;
     }
-
-    store.layers[0].push({
-        text: summary,
-        turnRange: [passageStart, endIdx],
-        timestamp: Date.now(),
-    });
-
-    store.summarizedUpTo = Math.max(store.summarizedUpTo, endIdx);
-
-    await saveChatStore();
-    await ghostMessagesUpTo(endIdx);
-    await maybePromoteLayer(0);
-    await saveChatStore();
-
-    try {
-        const ctx = SillyTavern.getContext();
-        if (ctx.saveChat) await ctx.saveChat();
-    } catch (e) {
-        log('Could not save chat:', e);
-    }
-
-    return true;
 }
 
 // ─── Core: Catchup Processing ────────────────────────────────────────
@@ -869,6 +966,7 @@ async function summarizeOneBatchFromTurns(visibleTurns) {
 async function runCatchup(visibleTurns, overflow) {
     const s = getSettings();
     const totalBatches = Math.ceil(overflow / s.turnsPerSummary);
+    trace('runCatchup start', { visibleTurns: visibleTurns?.length ?? 0, overflow, totalBatches });
     let completed = 0;
     let failed = 0;
     let cancelled = false;
@@ -897,10 +995,12 @@ async function runCatchup(visibleTurns, overflow) {
             const { chat } = SillyTavern.getContext();
             const allAssistantTurns = getAssistantTurns(chat);
             const currentVisible = allAssistantTurns.filter(t => !chat[t.index].extra?.sc_ghosted);
+            trace('runCatchup loop', { completed, failed, currentVisible: currentVisible.length, verbatimTurns: s.verbatimTurns });
 
             if (currentVisible.length <= s.verbatimTurns) break;
 
             const success = await summarizeOneBatchFromTurns(currentVisible);
+            trace('runCatchup batch result', { success });
 
             if (success) {
                 completed++;
@@ -910,6 +1010,7 @@ async function runCatchup(visibleTurns, overflow) {
                 consecutiveFailures++;
 
                 if (consecutiveFailures >= 3) {
+                    trace('runCatchup halted: consecutive failures', { consecutiveFailures });
                     toastr.error(
                         '3 consecutive failures — API may be down. Pausing catch-up. Progress saved; will resume on next message.',
                         'Summaryception',
@@ -931,18 +1032,21 @@ async function runCatchup(visibleTurns, overflow) {
         toastr.clear(progressToast);
 
         if (cancelled) {
+            trace('runCatchup finished: cancelled', { completed, failed, totalBatches });
             toastr.warning(
                 `Catch-up paused at ${completed}/${totalBatches}. Progress saved — will continue on next message.`,
                 'Summaryception',
                 { timeOut: 5000 }
             );
         } else if (failed === 0) {
+            trace('runCatchup finished: success', { completed, totalBatches });
             toastr.success(
                 `Catch-up complete! ${completed} batches processed.`,
                 'Summaryception',
                 { timeOut: 4000 }
             );
         } else {
+            trace('runCatchup finished: partial', { completed, failed, totalBatches });
             toastr.warning(
                 `Catch-up finished. ${completed} succeeded, ${failed} failed (will retry on next trigger).`,
                            'Summaryception',
@@ -1293,6 +1397,7 @@ function updateUI() {
 
         $('#sc_prompt_preset').val(s.promptPreset);
         $('#sc_debug_mode').prop('checked', s.debugMode);
+        $('#sc_trace_mode').prop('checked', s.traceMode);
         $('#sc_strip_patterns').val((s.stripPatterns || []).join('\n'));
         $('#sc_summarizer_response_length').val(s.summarizerResponseLength || 0);
 
@@ -1600,6 +1705,11 @@ function bindUIEvents() {
         saveSettings();
     });
 
+    $('#sc_trace_mode').on('change', function () {
+        getSettings().traceMode = $(this).prop('checked');
+        saveSettings();
+    });
+
     $('#sc_repair').on('click', async function () {
         const { chat } = SillyTavern.getContext();
         let repaired = 0;
@@ -1685,6 +1795,7 @@ function bindUIEvents() {
     });
 
     $('#sc_force_summarize').on('click', async function () {
+        trace('force summarize clicked');
         const s = getSettings();
         if (!s.enabled) {
             toastr.warning('Enable Summaryception first.');
@@ -1702,8 +1813,30 @@ function bindUIEvents() {
             catchupDismissed = false;
 
             const { chat } = SillyTavern.getContext();
-            const allAssistantTurns = getAssistantTurns(chat);
-            const visibleTurns = allAssistantTurns.filter(t => !chat[t.index].extra?.sc_ghosted);
+            const store = getChatStore();
+            const repairBoundary = store.summarizedUpTo ?? -1;
+
+            if (repairBoundary >= 0) {
+                const allAssistantTurns = getAssistantTurns(chat);
+                const unghostedBeforeBoundary = allAssistantTurns.filter(t => t.index <= repairBoundary && !chat[t.index].extra?.sc_ghosted);
+                trace('force summarize ghosting check', { repairBoundary, unghostedBeforeBoundary: unghostedBeforeBoundary.length });
+
+                if (unghostedBeforeBoundary.length > 0) {
+                    toastr.info(
+                        `Detected ${unghostedBeforeBoundary.length} summarized turns that were not ghosted. Repairing now...`,
+                        'Summaryception',
+                        { timeOut: 3500 }
+                    );
+                    const repaired = await repairGhostingForRange(repairBoundary);
+                    await saveChatStore();
+                    trace('force summarize ghosting repair complete', { repaired });
+                    toastr.success(`Ghosting repair complete (${repaired} messages).`, 'Summaryception', { timeOut: 3000 });
+                }
+            }
+
+            const refreshedAssistantTurns = getAssistantTurns(chat);
+            const visibleTurns = refreshedAssistantTurns.filter(t => !chat[t.index].extra?.sc_ghosted);
+            trace('force summarize turns', { all: refreshedAssistantTurns.length, visible: visibleTurns.length });
 
             if (visibleTurns.length <= s.verbatimTurns) {
                 toastr.info('Nothing to summarize — visible turns are within the verbatim limit.', 'Summaryception');
@@ -1711,6 +1844,7 @@ function bindUIEvents() {
             }
 
             const overflow = visibleTurns.length - s.verbatimTurns;
+            trace('force summarize overflow', { overflow });
             toastr.info(`${overflow} turns to process. Starting...`, 'Summaryception', { timeOut: 2000 });
 
             await runCatchup(visibleTurns, overflow);
