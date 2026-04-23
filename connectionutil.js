@@ -154,6 +154,11 @@ async function sendViaDefault(systemPrompt, userPrompt, responseLength) {
  * Uses ST's ConnectionManagerRequestService to send a request via a saved profile.
  * Requires SillyTavern with PR #3603 merged (March 2025+).
  * Full API key support requires staging with Issue #5348 fix (March 30, 2026+).
+ *
+ * IMPORTANT: sendRequest() expects messages as an array of {role, content} objects,
+ * NOT as a generateRaw()-style options object. Passing {systemPrompt, prompt} as
+ * the second argument causes the entire object to be stuffed into the message
+ * content field, resulting in "Invalid input" / validation errors from the API.
  */
 async function sendViaProfile(profileId, systemPrompt, userPrompt) {
     if (!profileId) {
@@ -183,14 +188,22 @@ async function sendViaProfile(profileId, systemPrompt, userPrompt) {
     }
 
     try {
-        const raw = await service.sendRequest(profileId, {
-            systemPrompt: systemPrompt,
-            prompt: userPrompt,
+        // Build messages as proper {role, content} objects.
+        // sendRequest expects: sendRequest(profileId, messages, options?)
+        // where messages is a string OR an array of {role, content} objects.
+        const messages = [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+        ];
+
+        const raw = await service.sendRequest(profileId, messages, {
             ignoreInstruct: true,
         });
 
+        // Debug: log what we actually got back
         console.log('[Summaryception][Connection] Profile sendRequest returned:', typeof raw, raw);
 
+        // Handle various possible return types
         let result;
         if (typeof raw === 'string') {
             result = raw;
