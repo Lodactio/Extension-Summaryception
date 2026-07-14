@@ -290,6 +290,10 @@ Keeps separate summary memory for each character card in the same chat. Useful f
 
 Automatically extracts stable facts (character traits, locations, items) from summaries and proposes them as World Info entries. Summaries handle events and state changes; lorebook entries handle things that should never be forgotten across layers. Includes a review queue so nothing gets written without your approval.
 
+### [Verdash's Summaryception](https://github.com/vadash/Extension-Summaryception) By Verdash
+
+Highly Polished Summaryception with many requested features by the community and superior context management.
+
 ---
 
 ## 🤝 Credits
