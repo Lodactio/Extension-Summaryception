@@ -1036,7 +1036,10 @@ async function summarizeOneBatch(visibleTurns) {
         trace('  storyTxt length:', storyTxt?.length ?? 'UNDEFINED');
         if (!storyTxt.trim()) {
             trace('<<< EXITING summarizeOneBatch - EMPTY PASSAGE');
-            return false;
+            // --- FIX: Advance pointer and save so it doesn't try this empty batch again next turn ---
+            store.summarizedUpTo = Math.max(store.summarizedUpTo, endIdx);
+            await saveChatStore();
+            return true; // Return true so it doesn't think the cycle crashed
         }
 
         const contextStr = buildFullContext(0);
@@ -1145,7 +1148,7 @@ async function summarizeOneBatchFromTurns(visibleTurns) {
         trace('  CRITICAL: passageStart > endIdx! This should never happen.');
         trace('  This likely means the batch was already summarized.');
         trace('<<< EXITING - passageStart > endIdx');
-        return false;
+        return 'EMPTY_SKIP';
     }
 
     trace('  About to call buildPassageFromRange...');
@@ -1157,7 +1160,12 @@ async function summarizeOneBatchFromTurns(visibleTurns) {
         if (!storyTxt.trim()) {
             trace('  <<< EXITING - storyTxt is empty after trim');
             trace('  This suggests all messages in range [' + passageStart + ', ' + endIdx + '] are hidden or empty');
-            return false;
+
+            // --- FIX: Advance pointer so we don't get stuck on these empty indexes ---
+            store.summarizedUpTo = Math.max(store.summarizedUpTo, endIdx);
+            await saveChatStore();
+
+            return 'EMPTY_SKIP'; // Return a distinct skip signal instead of false
         }
 
         trace('  About to call buildFullContext...');
@@ -1261,11 +1269,16 @@ async function runCatchup(visibleTurns, overflow) {
             }
 
             trace('  About to call summarizeOneBatchFromTurns...');
-            const success = await summarizeOneBatchFromTurns(currentVisible);
+            const result = await summarizeOneBatchFromTurns(currentVisible);
 
-            if (success) {
+            if (result === true) {
                 trace('  >>> summarizeOneBatchFromTurns returned SUCCESS');
                 completed++;
+                consecutiveFailures = 0;
+            } else if (result === 'EMPTY_SKIP') {
+                trace('  >>> summarizeOneBatchFromTurns returned EMPTY_SKIP (skipping empty system/hidden cards)');
+                // We do NOT increment failed or consecutiveFailures.
+                // We just let the loop run again to inspect the next set of turns.
                 consecutiveFailures = 0;
             } else {
                 trace('  >>> summarizeOneBatchFromTurns returned FAILURE');
