@@ -30,7 +30,7 @@ const defaultSettings = Object.freeze({
     snippetsPerLayer: 20,
     snippetsPerPromotion: 3,
     maxLayers: 5,
-    injectionTemplate: '\n\n<auto_injected_historical_context>\n(old events before chat messages)\n{{summary}}\n</auto_injected_historical_context>\n\n',
+    injectionTemplate: '\n\n<auto_injected_historical_context>\n[system guidance: this is a historical summary of messages that occurred prior to the oldest assistant message currently in context for this chat]\n{{summary}}\n</auto_injected_historical_context>\n\n',
 
     summarizerSystemPrompt:
         'Role: precise narrative-state tracker. Output only the summary line — no preamble, no commentary, no markdown.',
@@ -102,13 +102,15 @@ const PROMPT_PRESETS = {
 {{story_txt}}
 </passage_in_question>
 
-Summarize only the necessary elements from the passage_in_question to coherently continue the prior_context. If the passage_in_question has 2nd person point of view, 'you' pronoun in prose refers to the player. Use the player name in the summary output instead of 'you'.
+Summarize only the necessary elements from the passage_in_question to coherently continue the prior_context. If the passage_in_question has 2nd person point of view, 'you' pronoun in prose refers to the player. Use the player name in the final response instead of 'you'.
 
-Focus on: character interactions, dialogue tone, and relationship dynamics; emotional beats and character motivations; atmosphere, mood, and sensory details that establish tone; narrative themes and subtext; names, location changes, and time; plot developments and unresolved tensions.
+IF prior_context has no content: include establishing details in the generated summary, extend the maximum number of short phrases up to 40.
+
+Priority Elements: Time + location changes + narrative themes and subtext + sensory details that establish tone + atmosphere + mood + plot developments + proper names + character motivations + character interactions + dialogue tone + relationship dynamics + emotional beats + unresolved tensions.
 
 Exclude anything insubstantial, fluff, or events already covered in prior_context.
 
-Write in short phrases, up to 20; final response must be a single line:`,
+Write in short *phrases* — up to 20; final response must be a single line:`,
 
     gamestate: `<player_name>
 {{player_name}}
@@ -1508,7 +1510,7 @@ function updateInjection() {
 
         if (!s.enabled) {
             if (_lastInjected !== '') {
-                setExtensionPrompt(MODULE_NAME, '', 1, 0, false, 1);// variables explained in order: (in chat= 1, in sys prompt = 0), (depth from generation point (user input), number of messages), (true/false watched by world info, should be false), (system = 0, user = 1, assistant = 2) | current variable selection: 1, 0, false, 1 -> in chat, depth 0, not scanned, user
+                setExtensionPrompt(MODULE_NAME, '', 1, 12, false, 1);// variables explained in order: (in chat = 1, in sys prompt = 0), (depth from generation point (user input), number of messages), (true/false watched by world info, should be false), (system = 0, user = 1, assistant = 2) | current variable selection: 1, 0, false, 1 -> in chat, depth 0, not scanned, user
                 _lastInjected = '';
             }
             return;
@@ -1517,7 +1519,7 @@ function updateInjection() {
         const summaryBlock = assembleSummaryBlock();
         if (summaryBlock === _lastInjected) return;
 
-        setExtensionPrompt(MODULE_NAME, summaryBlock || '', 1, 0, false, 1);// (in chat= 1, in sys prompt = 0), (depth from generation point, number of messages), (true/false watched by world info, should be false), (system = 0, user = 1, assistant = 2) / 1, 0, false, 1 -> in chat, depth 0, not scanned, user
+        setExtensionPrompt(MODULE_NAME, summaryBlock || '', 1, 12, false, 1);// (in chat = 1, in sys prompt = 0), (depth from generation point, number of messages), (true/false watched by world info, should be false), (system = 0, user = 1, assistant = 2) / 1, 0, false, 1 -> in chat, depth 0, not scanned, user
         _lastInjected = summaryBlock || '';
 
         log(`Injection updated: ${(summaryBlock || '').length} chars`);
