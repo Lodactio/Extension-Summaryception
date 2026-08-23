@@ -444,6 +444,10 @@ async function sendViaOpenAI(url, apiKey, model, systemPrompt, userPrompt, maxTo
         }
     }
 
+
+    // Decide whether to use CORS proxy
+    const isLocal = /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?/i.test(endpoint);
+
     const headers = {
         'Content-Type': 'application/json',
     };
@@ -471,53 +475,65 @@ async function sendViaOpenAI(url, apiKey, model, systemPrompt, userPrompt, maxTo
 
     const body = JSON.stringify(requestBody);
 
-    // Always try ST's CORS proxy first, then fall back to a direct request.
-    // Remote endpoints are the ones most likely to fail a browser CORS preflight,
-    // so they must not skip the proxy. Matches the Ollama path above.
     let response;
-    try {
-        response = await fetch(proxiedUrl(endpoint), {
-            method: 'POST',
-            headers: { ...getProxyHeaders(), ...headers },
-            body: body,
-        });
-    } catch (proxyError) {
-        console.warn(`${MODULE_NAME} CORS proxy failed for OpenAI endpoint, trying direct:`, proxyError.message);
+    if (isLocal) {
         try {
-            response = await fetch(endpoint, {
+            response = await fetch(proxiedUrl(endpoint), {
                 method: 'POST',
-                headers: headers,
-                body: body,
+                headers: { ...getProxyHeaders(), ...headers },
+                                   body: body,
             });
-        } catch (directError) {
-            throw new ConnectionError(
-                `Failed to connect to ${baseUrl}. ` +
-                `Enable the CORS proxy in config.yaml (enableCorsProxy: true). ` +
-                `Proxy error: ${proxyError.message}. Direct error: ${directError.message}`,
-                { retryable: true }
-            );
+        } catch (proxyError) {
+            console.warn(`${MODULE_NAME} CORS proxy failed for OpenAI endpoint, trying direct:`, proxyError.message);
+            try {
+                response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: headers,
+                    body: body,
+                });
+            } catch (directError) {
+                throw new ConnectionError(
+                    `Failed to connect to ${baseUrl}. ` +
+                    `Enable the CORS proxy in config.yaml (enableCorsProxy: true). ` +
+                    `Proxy error: ${proxyError.message}. Direct error: ${directError.message}`,
+                    { retryable: true }
+                );
+            }
         }
-    }
+    } else {
+            try {
+                response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: headers,
+                    body: body,
+                });
+            } catch (directError) {
+                throw new ConnectionError(
+                    `Failed to connect to ${baseUrl}: ${fetchError.message}`,
+                    { retryable: true }
+                );
+            }
+        }
 
-    if (!response.ok) {
-        const errorText = await response.text().catch(() => 'Unknown error');
-        if (response.status === 401) {
+        if (!response.ok) {
+            const errorText = await response.text().catch(() => 'Unknown error');
+            if (response.status === 401) {
+                throw new ConnectionError(
+                    'OpenAI Compatible endpoint returned 401 Unauthorized. Check your API key.',
+                    { retryable: false, status: 401 }
+                );
+            }
+            if (response.status === 403) {
+                throw new ConnectionError(
+                    `OpenAI Compatible endpoint returned 403 Forbidden: ${errorText}`,
+                    { retryable: false, status: 403 }
+                );
+            }
             throw new ConnectionError(
-                'OpenAI Compatible endpoint returned 401 Unauthorized. Check your API key.',
-                { retryable: false, status: 401 }
+                `OpenAI Compatible request failed (${response.status}): ${errorText}`,
+                                      { retryable: response.status >= 500 || response.status === 429, status: response.status }
             );
         }
-        if (response.status === 403) {
-            throw new ConnectionError(
-                `OpenAI Compatible endpoint returned 403 Forbidden: ${errorText}`,
-                { retryable: false, status: 403 }
-            );
-        }
-        throw new ConnectionError(
-            `OpenAI Compatible request failed (${response.status}): ${errorText}`,
-                                  { retryable: response.status >= 500 || response.status === 429, status: response.status }
-        );
-    }
 
     // ─── Stream reading ──────────────────────────────────────────
     // Read SSE chunks and assemble the full response content.
