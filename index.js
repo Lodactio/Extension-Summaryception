@@ -314,14 +314,27 @@ function getChatStore() {
         chatMetadata[MODULE_NAME] = {
             layers: [],
             summarizedUpTo: -1,
-            ghostedIndices: [],           // Track which messages WE ghosted
+            ghostedIndices: [],
         };
     }
-    // Migration: add ghostedIndices if missing from older saves
-    if (!chatMetadata[MODULE_NAME].ghostedIndices) {
-        chatMetadata[MODULE_NAME].ghostedIndices = [];
+    const store = chatMetadata[MODULE_NAME];
+
+    // Existing migrations
+    if (!Array.isArray(store.layers)) store.layers = [];
+    if (!Array.isArray(store.ghostedIndices)) store.ghostedIndices = [];
+
+    // Migrate summarizedUpTo if missing/invalid (e.g. store written by
+    // another version of the extension). Comparing against undefined
+    // yields NaN → always false → every turn looks "already summarized"
+    // while nothing is.
+    if (!Number.isInteger(store.summarizedUpTo)) {
+        const layer0 = Array.isArray(store.layers[0]) ? store.layers[0] : [];
+        const ends = layer0.map(sn => sn?.turnRange?.[1]).filter(Number.isInteger);
+        store.summarizedUpTo = ends.length ? Math.max(...ends) : -1;
+        log(`Store migration: summarizedUpTo was missing/invalid → derived ${store.summarizedUpTo}`);
     }
-    return chatMetadata[MODULE_NAME];
+
+    return store;
 }
 
 async function saveChatStore() {
