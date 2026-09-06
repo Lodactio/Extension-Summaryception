@@ -16,6 +16,18 @@
 
 const MODULE_NAME = '[Summaryception][Connection]';
 
+// ═══════════════════════════════════════════════════════════════════════
+//  LLM_DEFAULTS — Centralised connection-side constants.
+//  Tweak sampling parameters and limits here instead of inside functions.
+// ═══════════════════════════════════════════════════════════════════════
+
+const LLM_DEFAULTS = Object.freeze({
+    ollamaTemperature:    0.3,    // Lower = more deterministic summaries
+    openaiTemperature:    0.8,    // Slightly creative for narrative flow
+    testMaxTokens:        100,    // Small ceiling for the "Test Connection" probe
+    testPreviewLength:    100,    // Characters of response shown in test result toast
+});
+
 // ─── Custom Error Class ──────────────────────────────────────────────
 
 /**
@@ -309,7 +321,7 @@ async function sendViaOllama(url, model, systemPrompt, userPrompt) {
                 ],
                 stream: false,
                 options: {
-                    temperature: 0.3,
+                    temperature: LLM_DEFAULTS.ollamaTemperature,
                 },
             }),
         });
@@ -326,7 +338,7 @@ async function sendViaOllama(url, model, systemPrompt, userPrompt) {
                         { role: 'user', content: userPrompt },
                     ],
                     stream: false,
-                    options: { temperature: 0.3 },
+                    options: { temperature: LLM_DEFAULTS.ollamaTemperature },
                 }),
             });
         } catch (directError) {
@@ -464,7 +476,7 @@ async function sendViaOpenAI(url, apiKey, model, systemPrompt, userPrompt, maxTo
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt },
         ],
-        temperature: 0.8,
+        temperature: LLM_DEFAULTS.openaiTemperature,
         stream: true,
     };
 
@@ -501,39 +513,39 @@ async function sendViaOpenAI(url, apiKey, model, systemPrompt, userPrompt, maxTo
             }
         }
     } else {
-            try {
-                response = await fetch(endpoint, {
-                    method: 'POST',
-                    headers: headers,
-                    body: body,
-                });
-            } catch (directError) {
-                throw new ConnectionError(
-                    `Failed to connect to ${baseUrl}: ${fetchError.message}`,
-                    { retryable: true }
-                );
-            }
-        }
-
-        if (!response.ok) {
-            const errorText = await response.text().catch(() => 'Unknown error');
-            if (response.status === 401) {
-                throw new ConnectionError(
-                    'OpenAI Compatible endpoint returned 401 Unauthorized. Check your API key.',
-                    { retryable: false, status: 401 }
-                );
-            }
-            if (response.status === 403) {
-                throw new ConnectionError(
-                    `OpenAI Compatible endpoint returned 403 Forbidden: ${errorText}`,
-                    { retryable: false, status: 403 }
-                );
-            }
+        try {
+            response = await fetch(endpoint, {
+                method: 'POST',
+                headers: headers,
+                body: body,
+            });
+        } catch (directError) {
             throw new ConnectionError(
-                `OpenAI Compatible request failed (${response.status}): ${errorText}`,
-                                      { retryable: response.status >= 500 || response.status === 429, status: response.status }
+                `Failed to connect to ${baseUrl}: ${directError.message}`,
+                { retryable: true }
             );
         }
+    }
+
+    if (!response.ok) {
+        const errorText = await response.text().catch(() => 'Unknown error');
+        if (response.status === 401) {
+            throw new ConnectionError(
+                'OpenAI Compatible endpoint returned 401 Unauthorized. Check your API key.',
+                { retryable: false, status: 401 }
+            );
+        }
+        if (response.status === 403) {
+            throw new ConnectionError(
+                `OpenAI Compatible endpoint returned 403 Forbidden: ${errorText}`,
+                { retryable: false, status: 403 }
+            );
+        }
+        throw new ConnectionError(
+            `OpenAI Compatible request failed (${response.status}): ${errorText}`,
+                                  { retryable: response.status >= 500 || response.status === 429, status: response.status }
+        );
+    }
 
     // ─── Stream reading ──────────────────────────────────────────
     // Read SSE chunks and assemble the full response content.
@@ -601,11 +613,11 @@ export async function testOpenAIConnection(url, apiKey, model) {
             model || 'test',
             'You are a test assistant.',
             'Respond with exactly: CONNECTION_OK',
-            100 // small token limit for test
+            LLM_DEFAULTS.testMaxTokens
         );
         return {
             success: true,
-            message: `Connection successful! Response: "${result.substring(0, 100)}"`,
+            message: `Connection successful! Response: "${result.substring(0, LLM_DEFAULTS.testPreviewLength)}"`,
         };
     } catch (error) {
         return {
