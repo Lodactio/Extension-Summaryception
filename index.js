@@ -1575,6 +1575,7 @@ function updateInjection() {
 // ─── Event Handlers ──────────────────────────────────────────────────
 
 function onMessageReceived(messageIndex) {
+    if (!getSettings().enabled) return;
     try {
         const { chat } = SillyTavern.getContext();
         const msg = chat[messageIndex];
