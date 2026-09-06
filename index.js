@@ -92,28 +92,28 @@ const defaultSettings = Object.freeze({
     injectionTemplate: '\n\n<auto_injected_historical_context>\n[system guidance: this is a historical summary of messages that occurred prior to the oldest assistant message currently in context for this chat]\n{{summary}}\n</auto_injected_historical_context>\n\n',
 
     summarizerSystemPrompt:
-    'Role: precise narrative-state tracker. Output only the summary line — no preamble, no commentary, no markdown.',
+        'Role: precise narrative-state tracker. Output only the summary line — no preamble, no commentary, no markdown.',
 
     summarizerUserPrompt:
-    `<player_name>
-    {{player_name}}
-    </player_name>
+        `<player_name>
+{{player_name}}
+</player_name>
 
-    <prior_context>
-    {{context_str}}
-    </prior_context>
+<prior_context>
+{{context_str}}
+</prior_context>
 
-    <passage_in_question>
-    {{story_txt}}
-    </passage_in_question>
+<passage_in_question>
+{{story_txt}}
+</passage_in_question>
 
-    Summarize only the necessary elements from the passage_in_question to coherently continue the prior_context. If the passage_in_question has 2nd person point of view, 'you' pronoun in prose refers to the player. Use the player name in the summary output instead of 'you'.
+Summarize only the necessary elements from the passage_in_question to coherently continue the prior_context. If the passage_in_question has 2nd person point of view, 'you' pronoun in prose refers to the player. Use the player name in the summary output instead of 'you'.
 
-    Focus on: character interactions, dialogue tone, and relationship dynamics; emotional beats and character motivations; atmosphere, mood, and sensory details that establish tone; narrative themes and subtext; names, location changes, and time; plot developments and unresolved tensions; details that distinguish this moment from any other.
+Focus on: character interactions, dialogue tone, and relationship dynamics; emotional beats and character motivations; atmosphere, mood, and sensory details that establish tone; narrative themes and subtext; names, location changes, and time; plot developments and unresolved tensions; details that distinguish this moment from any other.
 
-    Exclude anything insubstantial, fluff, atmospheric details, or events already covered in Prior Context.
+Exclude anything insubstantial, fluff, atmospheric details, or events already covered in Prior Context.
 
-    Write in short phrases, no more than 20; output must be a single line:`,
+Write in short phrases, no more than 20; output must be a single line:`,
 
     promptPreset: 'narrative',  // 'narrative' | 'gamestate' | 'custom'
     savedCustomPrompts: {},        // { name: promptText } — named custom prompt slots
@@ -150,46 +150,46 @@ const defaultSettings = Object.freeze({
 
 const PROMPT_PRESETS = {
     narrative: `<player_name>
-    {{player_name}}
-    </player_name>
+{{player_name}}
+</player_name>
 
-    <prior_context>
-    {{context_str}}
-    </prior_context>
+<prior_context>
+{{context_str}}
+</prior_context>
 
-    <passage_in_question>
-    {{story_txt}}
-    </passage_in_question>
+<passage_in_question>
+{{story_txt}}
+</passage_in_question>
 
-    Summarize only the necessary elements from the passage_in_question to coherently continue the prior_context. If the passage_in_question has 2nd person point of view, 'you' pronoun in prose refers to the player. Use the player name in the final response instead of 'you'.
+Summarize only the necessary elements from the passage_in_question to coherently continue the prior_context. If the passage_in_question has 2nd person point of view, 'you' pronoun in prose refers to the player. Use the player name in the final response instead of 'you'.
 
-    IF prior_context has no content: include establishing details in the generated summary, extend the maximum number of short phrases up to 40.
+IF prior_context has no content: include establishing details in the generated summary, extend the maximum number of short phrases up to 40.
 
-    Priority Elements: Time + location changes + narrative themes and subtext + sensory details that establish tone + atmosphere + mood + plot developments + proper names + character motivations + character interactions + dialogue tone + relationship dynamics + emotional beats + unresolved tensions.
+Priority Elements: Time + location changes + narrative themes and subtext + sensory details that establish tone + atmosphere + mood + plot developments + proper names + character motivations + character interactions + dialogue tone + relationship dynamics + emotional beats + unresolved tensions.
 
-    Exclude anything insubstantial, fluff, or events already covered in prior_context.
+Exclude anything insubstantial, fluff, or events already covered in prior_context.
 
-    Write in short *phrases* — up to 20; final response must be a single line:`,
+Write in short *phrases* — up to 20; final response must be a single line:`,
 
     gamestate: `<player_name>
-    {{player_name}}
-    </player_name>
+{{player_name}}
+</player_name>
 
-    <prior_context>
-    {{context_str}}
-    </prior_context>
+<prior_context>
+{{context_str}}
+</prior_context>
 
-    <passage_in_question>
-    {{story_txt}}
-    </passage_in_question>
+<passage_in_question>
+{{story_txt}}
+</passage_in_question>
 
-    Summarize only the necessary elements from the passage_in_question to coherently continue the prior_context.
+Summarize only the necessary elements from the passage_in_question to coherently continue the prior_context.
 
-    Focus on: story progression, plot points, plans, tasks, quests; location changes and current location (reference by name); location interactables encountered, used, or discovered; significant changes to player, NPCs, locations, world, or setting.
+Focus on: story progression, plot points, plans, tasks, quests; location changes and current location (reference by name); location interactables encountered, used, or discovered; significant changes to player, NPCs, locations, world, or setting.
 
-    Exclude anything insubstantial, fluff, atmospheric details, or events already covered in Prior Context.
-    Skip any passages that are empty, unclear, or lack significant content.
-    Write in short phrases, no more than 20; output must be a single line:`,
+Exclude anything insubstantial, fluff, atmospheric details, or events already covered in Prior Context.
+Skip any passages that are empty, unclear, or lack significant content.
+Write in short phrases, no more than 20; output must be a single line:`,
 
     custom: null, // Uses whatever is in the textarea
 };
@@ -205,8 +205,8 @@ function sleep(ms) {
 function parseRetryAfter(error) {
     try {
         const retryAfter = error?.response?.headers?.['retry-after']
-        || error?.retryAfter
-        || error?.data?.retry_after;
+            || error?.retryAfter
+            || error?.data?.retry_after;
         if (!retryAfter) return null;
         const seconds = Number(retryAfter);
         if (!isNaN(seconds)) return seconds * 1000;
@@ -250,8 +250,8 @@ function trace(...args) {
     const s = getSettings();
     if (s.debugMode && s.traceMode) {
         const normalized = args.map((arg, idx) => (idx === 0 && typeof arg === 'string')
-        ? arg.toUpperCase()
-        : arg);
+            ? arg.toUpperCase()
+            : arg);
         console.log(LOG_PREFIX, '[TRACE]', ...normalized);
     }
 }
@@ -430,8 +430,8 @@ async function unghostAllMessages() {
 
     // Only unhide messages that WE ghosted, not user-hidden messages
     const toUnhide = store.ghostedIndices && store.ghostedIndices.length > 0
-    ? [...store.ghostedIndices]
-    : [];
+        ? [...store.ghostedIndices]
+        : [];
 
     // Fallback for older saves that don't have ghostedIndices:
     // find messages with our sc_ghosted flag
@@ -828,9 +828,9 @@ async function callSummarizer(storyTxt, contextStr) {
     });
 
     const prompt = s.summarizerUserPrompt
-    .replace('{{player_name}}', getPlayerName())
-    .replace('{{context_str}}', contextStr || '(none yet)')
-    .replace('{{story_txt}}', storyTxt);
+        .replace('{{player_name}}', getPlayerName())
+        .replace('{{context_str}}', contextStr || '(none yet)')
+        .replace('{{story_txt}}', storyTxt);
 
     log('── Summarizer Call ──');
     log('Context str length:', contextStr.length, 'chars');
@@ -863,18 +863,18 @@ async function callSummarizer(storyTxt, contextStr) {
                 trace(`  About to call sendSummarizerRequest with:`, {
                     connectionSource: s.connectionSource,
                     summarizerSystemPrompt: s.summarizerSystemPrompt?.substring(0, 50),
-                      promptLength: prompt.length,
+                    promptLength: prompt.length,
                 });
 
                 const result = await Promise.race([
                     sendSummarizerRequest(s, s.summarizerSystemPrompt, prompt),
-                                                  new Promise((_, reject) => {
-                                                      const timer = setTimeout(() => reject(new Error('Request timed out after 120s')), TUNING.llmRequestTimeout);
-                                                      signal.addEventListener('abort', () => {
-                                                          clearTimeout(timer);
-                                                          reject(new Error('Aborted by user'));
-                                                      });
-                                                  }),
+                    new Promise((_, reject) => {
+                        const timer = setTimeout(() => reject(new Error('Request timed out after 120s')), TUNING.llmRequestTimeout);
+                        signal.addEventListener('abort', () => {
+                            clearTimeout(timer);
+                            reject(new Error('Aborted by user'));
+                        });
+                    }),
                 ]);
 
                 trace('  sendSummarizerRequest returned:', result?.substring?.(0, 50));
@@ -935,8 +935,8 @@ async function callSummarizer(storyTxt, contextStr) {
 
                 toastr.warning(
                     `API error (${status}). Retrying in ${delaySec}s... (${attempt + 1}/${RETRY_CONFIG.maxRetries})`,
-                               'Summaryception',
-                               { timeOut: delay }
+                    'Summaryception',
+                    { timeOut: delay }
                 );
 
                 await new Promise((resolve) => {
@@ -953,8 +953,8 @@ async function callSummarizer(storyTxt, contextStr) {
         console.error(LOG_PREFIX, 'Summarization failed after all retries:', lastError);
         toastr.error(
             `Summarization failed after ${RETRY_CONFIG.maxRetries} retries${status ? ` (${status})` : ''}. Batch skipped — will retry on next trigger.`,
-                     'Summaryception',
-                     { timeOut: TUNING.toastError }
+            'Summaryception',
+            { timeOut: TUNING.toastError }
         );
         trace('<<< EXITING callSummarizer WITH FAILURE');
         return '';
@@ -1280,17 +1280,17 @@ async function runCatchup(visibleTurns, overflow) {
 
     const progressToast = toastr.info(
         `Processing backlog: 0 / ${totalBatches} batches (0%)`,
-                                      'Summaryception Catch-Up',
-                                      {
-                                          timeOut: 0,
-                                          extendedTimeOut: 0,
-                                          tapToDismiss: false,
-                                          closeButton: true,
-                                          onCloseClick: () => {
-                                              cancelled = true;
-                                              abortSummarization();
-                                          },
-                                      }
+        'Summaryception Catch-Up',
+        {
+            timeOut: 0,
+            extendedTimeOut: 0,
+            tapToDismiss: false,
+            closeButton: true,
+            onCloseClick: () => {
+                cancelled = true;
+                abortSummarization();
+            },
+        }
     );
 
     isSummarizing = true;
@@ -1364,8 +1364,8 @@ async function runCatchup(visibleTurns, overflow) {
         } else {
             toastr.warning(
                 `Catch-up finished. ${completed} succeeded, ${failed} failed (will retry on next trigger).`,
-                           'Summaryception',
-                           { timeOut: TUNING.toastExtended }
+                'Summaryception',
+                { timeOut: TUNING.toastExtended }
             );
         }
 
@@ -1464,8 +1464,8 @@ async function maybePromoteLayer(layerIndex) {
 
         toastr.info(
             `Seeded Layer ${layerIndex + 1} from Layer ${layerIndex} (free promotion)`,
-                    'Summaryception',
-                    { timeOut: TUNING.toastDefault }
+            'Summaryception',
+            { timeOut: TUNING.toastDefault }
         );
 
         if (layer.length > s.snippetsPerLayer) {
@@ -1551,8 +1551,8 @@ function updateInjection() {
         if (!s.enabled) {
             if (_lastInjected !== '') {
                 setExtensionPrompt(MODULE_NAME, '',
-                                   TUNING.injectionPosition, TUNING.injectionDepth,
-                                   TUNING.injectionScan, TUNING.injectionRole);
+                    TUNING.injectionPosition, TUNING.injectionDepth,
+                    TUNING.injectionScan, TUNING.injectionRole);
                 _lastInjected = '';
             }
             return;
@@ -1562,8 +1562,8 @@ function updateInjection() {
         if (summaryBlock === _lastInjected) return;
 
         setExtensionPrompt(MODULE_NAME, summaryBlock || '',
-                           TUNING.injectionPosition, TUNING.injectionDepth,
-                           TUNING.injectionScan, TUNING.injectionRole);
+            TUNING.injectionPosition, TUNING.injectionDepth,
+            TUNING.injectionScan, TUNING.injectionRole);
         _lastInjected = summaryBlock || '';
 
         log(`Injection updated: ${(summaryBlock || '').length} chars`);
@@ -1802,15 +1802,15 @@ function updateSnippetBrowser() {
             for (let j = 0; j < layer.length; j++) {
                 const sn = layer[j];
                 const rangeStr = sn.turnRange
-                ? `turns ${sn.turnRange[0]}–${sn.turnRange[1]}`
-                : sn.mergedCount
-                ? `merged ${sn.mergedCount} from L${sn.fromLayer}`
-                : '';
+                    ? `turns ${sn.turnRange[0]}–${sn.turnRange[1]}`
+                    : sn.mergedCount
+                        ? `merged ${sn.mergedCount} from L${sn.fromLayer}`
+                        : '';
                 const seedStr = sn.promoted ? ' 🌱' : '';
                 const canRedo = (i === 0 && sn.turnRange);
                 const redoBtn = canRedo
-                ? `<button class="sc-snippet-redo menu_button fa-solid fa-rotate-right" title="Regenerate this snippet"></button>`
-                : '';
+                    ? `<button class="sc-snippet-redo menu_button fa-solid fa-rotate-right" title="Regenerate this snippet"></button>`
+                    : '';
 
                 html += `<div class="sc-snippet" data-layer="${i}" data-idx="${j}">
                 <span class="sc-snippet-text" data-layer="${i}" data-idx="${j}" title="Click to edit">${escapeHtml(sn.text)}</span>
@@ -1836,32 +1836,32 @@ function updateSnippetBrowser() {
         const textEl = $(this);
 
         const textarea = $('<textarea class="sc-snippet-edit"></textarea>')
-        .val(sn.text)
-        .on('keydown', async function (e) {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
+            .val(sn.text)
+            .on('keydown', async function (e) {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    const newText = $(this).val().trim();
+                    if (newText) {
+                        sn.text = newText;
+                        await saveChatStore();
+                        updateInjection();
+                        toastr.success('Snippet updated', 'Summaryception', { timeOut: TUNING.toastShort });
+                    }
+                    updateSnippetBrowser();
+                } else if (e.key === 'Escape') {
+                    updateSnippetBrowser();
+                }
+            })
+            .on('blur', async function () {
                 const newText = $(this).val().trim();
-                if (newText) {
+                if (newText && newText !== sn.text) {
                     sn.text = newText;
                     await saveChatStore();
                     updateInjection();
                     toastr.success('Snippet updated', 'Summaryception', { timeOut: TUNING.toastShort });
                 }
                 updateSnippetBrowser();
-            } else if (e.key === 'Escape') {
-                updateSnippetBrowser();
-            }
-        })
-        .on('blur', async function () {
-            const newText = $(this).val().trim();
-            if (newText && newText !== sn.text) {
-                sn.text = newText;
-                await saveChatStore();
-                updateInjection();
-                toastr.success('Snippet updated', 'Summaryception', { timeOut: TUNING.toastShort });
-            }
-            updateSnippetBrowser();
-        });
+            });
 
         textEl.replaceWith(textarea);
 
@@ -1885,8 +1885,8 @@ function updateSnippetBrowser() {
         if (!sn.turnRange) {
             toastr.warning(
                 'Only Layer 0 (turn summary) snippets can be regenerated. Promoted meta-summaries have no source turns.',
-                           'Summaryception',
-                           { timeOut: TUNING.toastLonger }
+                'Summaryception',
+                { timeOut: TUNING.toastLonger }
             );
             return;
         }
@@ -1962,8 +1962,8 @@ function updateSnippetBrowser() {
 
             if (store.layers[0] && store.layers[0].length > 0) {
                 const maxEnd = Math.max(...store.layers[0]
-                .filter(sn => sn.turnRange)
-                .map(sn => sn.turnRange[1]));
+                    .filter(sn => sn.turnRange)
+                    .map(sn => sn.turnRange[1]));
                 store.summarizedUpTo = maxEnd;
             } else {
                 store.summarizedUpTo = -1;
@@ -2625,9 +2625,9 @@ function updateConnectionSubPanels(source) {
         if (panel) panel.style.display = 'none';
     });
 
-        if (panels[source]) {
-            panels[source].style.display = 'block';
-        }
+    if (panels[source]) {
+        panels[source].style.display = 'block';
+    }
 }
 
 function populateOllamaModelDropdown(selectElement, models, currentValue) {
