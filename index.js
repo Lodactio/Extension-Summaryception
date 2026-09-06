@@ -1,5 +1,5 @@
 /**
- * Summaryception v5.5.3 — Layered Recursive Summarization for SillyTavern
+ * Summaryception v5.5.4 — Layered Recursive Summarization for SillyTavern
  *
  * NON-DESTRUCTIVE: Uses SillyTavern's native /hide and /unhide commands
  * to exclude summarized messages from LLM context while keeping them
@@ -20,6 +20,65 @@ import {
 const MODULE_NAME = 'summaryception';
 const LOG_PREFIX = '[Summaryception]';
 // const TRACE_MODE = true;  // ultra-verbose logging
+
+// ═══════════════════════════════════════════════════════════════════════
+//  TUNING — Centralised operational constants.
+//  Change these instead of hunting through function bodies.
+// ═══════════════════════════════════════════════════════════════════════
+
+const TUNING = Object.freeze({
+
+    // ── Retry / Resilience ─────────────────────────────────────────
+    maxRetries:               5,        // LLM call retry attempts before giving up
+    retryBaseDelay:           2_000,    // ms — initial back-off delay
+    retryMaxDelay:            60_000,   // ms — ceiling for exponential back-off
+    retryBackoffMultiplier:   2,        // exponential growth factor
+    retryableStatuses:        [429, 500, 502, 503, 504],
+    llmRequestTimeout:        120_000,  // ms — per-request hard timeout
+    consecutiveFailureLimit:  3,        // catchup aborts after this many failures in a row
+
+    // ── Backlog / Catchup ──────────────────────────────────────────
+    backlogMultiplier:        2,        // overflow > turnsPerSummary × this triggers catchup dialog
+
+    // ── Event Debouncing ───────────────────────────────────────────
+    messageReceivedDelay:     500,      // ms — delay after new message before summarisation check
+    chatChangedDelay:         100,      // ms — delay after chat switch before UI refresh
+    catchupInterBatchDelay:   200,      // ms — breathing room between catchup batches
+
+    // ── Progress Reporting ─────────────────────────────────────────
+    ghostProgressInterval:    10,       // update toast every N messages during ghost/unghost
+    repairProgressInterval:   5,        // update toast every N messages during repair scan
+
+    // ── Injection Position ─────────────────────────────────────────
+    // setExtensionPrompt(name, text, position, depth, scan, role)
+    injectionPosition:        1,        // 0 = system prompt, 1 = in-chat
+    injectionDepth:           12,       // messages from generation point
+    injectionScan:            false,    // watched by World Info?
+    injectionRole:            1,        // 0 = system, 1 = user, 2 = assistant
+
+    // ── Toast Durations (ms) ───────────────────────────────────────
+    // Named by intent so you can tune notification verbosity in one place.
+    toastShort:               1_500,
+    toastDefault:             2_000,
+    toastMedium:              3_000,
+    toastLong:                4_000,
+    toastLonger:              5_000,
+    toastExtended:            6_000,
+    toastError:               8_000,
+
+    // ── Connection UI ──────────────────────────────────────────────
+    connectionStatusTimeout:  8_000,    // ms — auto-hide the status indicator
+    stopButtonCooldown:       2_000,    // ms — brief disable after clicking Stop
+});
+
+// Legacy alias — keeps RETRY_CONFIG references readable without a noisy diff.
+const RETRY_CONFIG = Object.freeze({
+    maxRetries:         TUNING.maxRetries,
+    baseDelay:          TUNING.retryBaseDelay,
+    maxDelay:           TUNING.retryMaxDelay,
+    backoffMultiplier:  TUNING.retryBackoffMultiplier,
+    retryableStatuses:  TUNING.retryableStatuses,
+});
 
 // ─── Default Settings ────────────────────────────────────────────────
 
@@ -137,15 +196,7 @@ Write in short phrases, no more than 20; output must be a single line:`,
 
 const DEFAULT_PROMPT_PRESET = 'narrative';
 
-// ─── Retry Configuration ─────────────────────────────────────────────
-
-const RETRY_CONFIG = {
-    maxRetries: 5,
-    baseDelay: 2000,
-    maxDelay: 60000,
-    backoffMultiplier: 2,
-    retryableStatuses: [429, 500, 502, 503, 504],
-};
+// ─── Helpers ─────────────────────────────────────────────────────────
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -190,8 +241,6 @@ function isRetryableError(error) {
     if (msg.includes('capacity')) return true;
     return false;
 }
-
-// ─── Helpers ─────────────────────────────────────────────────────────
 
 function log(...args) {
     if (getSettings().debugMode) console.log(LOG_PREFIX, ...args);
@@ -422,7 +471,7 @@ async function unghostAllMessages() {
         }
 
         processed++;
-        if (processed % 10 === 0) {
+        if (processed % TUNING.ghostProgressInterval === 0) {
             const pct = Math.round((processed / toUnhide.length) * 100);
             $(progressToast).find('.toast-message').text(
                 `Unhiding messages: ${processed} / ${toUnhide.length} (${pct}%)`
@@ -483,7 +532,7 @@ async function ghostMessagesUpTo(endIndex) {
         }
 
         processed++;
-        if (!s.disableGhosting && progressToast && processed % 10 === 0) {
+        if (!s.disableGhosting && progressToast && processed % TUNING.ghostProgressInterval === 0) {
             const pct = Math.round((i / (endIndex + 1)) * 100);
             $(progressToast).find('.toast-message').text(
                 `Hiding messages: ${i} / ${endIndex + 1} (${pct}%)`
@@ -558,7 +607,7 @@ async function repairIfBranched() {
         toastr.info(
             `Branch detected — trimmed ${oldSummarizedUpTo - store.summarizedUpTo} turns of stale summary data that referenced messages beyond the branch point.`,
             'Summaryception — Branch Repair',
-            { timeOut: 6000 }
+            { timeOut: TUNING.toastExtended }
         );
     }
 }
@@ -802,7 +851,7 @@ async function callSummarizer(storyTxt, contextStr) {
 
             if (signal.aborted) {
                 log('Summarization aborted by user.');
-                toastr.warning('Summarization aborted.', 'Summaryception', { timeOut: 3000 });
+                toastr.warning('Summarization aborted.', 'Summaryception', { timeOut: TUNING.toastMedium });
                 return '';
             }
 
@@ -817,11 +866,10 @@ async function callSummarizer(storyTxt, contextStr) {
                     promptLength: prompt.length,
                 });
 
-                const timeoutMs = 120000;
                 const result = await Promise.race([
                     sendSummarizerRequest(s, s.summarizerSystemPrompt, prompt),
                     new Promise((_, reject) => {
-                        const timer = setTimeout(() => reject(new Error('Request timed out after 120s')), timeoutMs);
+                        const timer = setTimeout(() => reject(new Error('Request timed out after 120s')), TUNING.llmRequestTimeout);
                         signal.addEventListener('abort', () => {
                             clearTimeout(timer);
                             reject(new Error('Aborted by user'));
@@ -853,7 +901,7 @@ async function callSummarizer(storyTxt, contextStr) {
 
                 if (signal.aborted || err.message === 'Aborted by user') {
                     log('Summarization aborted by user.');
-                    toastr.warning('Summarization aborted.', 'Summaryception', { timeOut: 3000 });
+                    toastr.warning('Summarization aborted.', 'Summaryception', { timeOut: TUNING.toastMedium });
                     return '';
                 }
 
@@ -906,7 +954,7 @@ async function callSummarizer(storyTxt, contextStr) {
         toastr.error(
             `Summarization failed after ${RETRY_CONFIG.maxRetries} retries${status ? ` (${status})` : ''}. Batch skipped — will retry on next trigger.`,
             'Summaryception',
-            { timeOut: 8000 }
+            { timeOut: TUNING.toastError }
         );
         trace('<<< EXITING callSummarizer WITH FAILURE');
         return '';
@@ -924,7 +972,7 @@ async function callSummarizer(storyTxt, contextStr) {
 async function maybeSummarizeTurns() {
     const s = getSettings();
     if (!s.enabled) return;
-    if (s.pauseSummarization) return;  // ← new
+    if (s.pauseSummarization) return;
     if (isSummarizing) return;
 
     const { chat } = SillyTavern.getContext();
@@ -940,7 +988,7 @@ async function maybeSummarizeTurns() {
     const overflow = visibleTurns.length - s.verbatimTurns;
 
     // ─── Backlog detection ───────────────────────────────────────
-    const backlogThreshold = s.turnsPerSummary * 2;
+    const backlogThreshold = s.turnsPerSummary * TUNING.backlogMultiplier;
 
     if (overflow > backlogThreshold && !catchupDismissed) {
         log(`Large backlog detected: ${overflow} turns over limit`);
@@ -1047,7 +1095,7 @@ async function summarizeOneBatch(visibleTurns) {
         const contextStr = buildFullContext(0);
 
         toastr.info(`Summarizing ${batch.length} turn${batch.length > 1 ? 's' : ''}…`, 'Summaryception', {
-            timeOut: 3000,
+            timeOut: TUNING.toastMedium,
             progressBar: true,
         });
 
@@ -1081,7 +1129,7 @@ async function summarizeOneBatch(visibleTurns) {
             log('Could not save chat:', e);
         }
 
-        toastr.success(`Summary saved (Layer 0: ${store.layers[0].length} snippets)`, 'Summaryception', { timeOut: 2000 });
+        toastr.success(`Summary saved (Layer 0: ${store.layers[0].length} snippets)`, 'Summaryception', { timeOut: TUNING.toastDefault });
         trace('<<< EXITING summarizeOneBatch - SUCCESS');
         return true;
 
@@ -1101,16 +1149,10 @@ async function summarizeOneBatchFromTurns(visibleTurns) {
     const store = getChatStore();
 
     // ─── FIX: Filter out turns that are at or before summarizedUpTo ───
-    // This handles desync where summarizedUpTo advanced but ghosting failed
-    // (e.g., connection drop mid-summarization). Without this filter, the batch
-    // always starts at the first un-ghosted turn, gets rejected by the
-    // startIdx <= summarizedUpTo guard, and loops forever.
     const eligibleTurns = visibleTurns.filter(t => t.index > store.summarizedUpTo);
     trace('  eligibleTurns after filtering:', eligibleTurns.length);
 
     if (eligibleTurns.length === 0) {
-        // All "visible" turns are actually already summarized but not ghosted.
-        // Ghost them now to fix the desync.
         log('All visible turns are already summarized — repairing ghosting...');
         const turnsToGhost = visibleTurns.filter(t => t.index <= store.summarizedUpTo);
         for (const t of turnsToGhost) {
@@ -1167,7 +1209,7 @@ async function summarizeOneBatchFromTurns(visibleTurns) {
             store.summarizedUpTo = Math.max(store.summarizedUpTo, endIdx);
             await saveChatStore();
 
-            return 'EMPTY_SKIP'; // Return a distinct skip signal instead of false
+            return 'EMPTY_SKIP';
         }
 
         trace('  About to call buildFullContext...');
@@ -1279,21 +1321,19 @@ async function runCatchup(visibleTurns, overflow) {
                 consecutiveFailures = 0;
             } else if (result === 'EMPTY_SKIP') {
                 trace('  >>> summarizeOneBatchFromTurns returned EMPTY_SKIP (skipping empty system/hidden cards)');
-                // We do NOT increment failed or consecutiveFailures.
-                // We just let the loop run again to inspect the next set of turns.
                 consecutiveFailures = 0;
             } else {
                 trace('  >>> summarizeOneBatchFromTurns returned FAILURE');
                 failed++;
                 consecutiveFailures++;
 
-                if (consecutiveFailures >= 3) {
+                if (consecutiveFailures >= TUNING.consecutiveFailureLimit) {
                     toastr.error(
-                        '3 consecutive failures — API may be down. Pausing catch-up. Progress saved; will resume on next message.',
+                        `${TUNING.consecutiveFailureLimit} consecutive failures — API may be down. Pausing catch-up. Progress saved; will resume on next message.`,
                         'Summaryception',
-                        { timeOut: 8000 }
+                        { timeOut: TUNING.toastError }
                     );
-                    trace('  3 consecutive failures, breaking');
+                    trace(`  ${TUNING.consecutiveFailureLimit} consecutive failures, breaking`);
                     break;
                 }
             }
@@ -1304,7 +1344,7 @@ async function runCatchup(visibleTurns, overflow) {
                 `Processing: ${completed} / ${totalBatches} batches (${pct}%)${failStr}\nClick ✕ to pause`
             );
 
-            await new Promise(r => setTimeout(r, 200));
+            await new Promise(r => setTimeout(r, TUNING.catchupInterBatchDelay));
         }
 
         toastr.clear(progressToast);
@@ -1313,19 +1353,19 @@ async function runCatchup(visibleTurns, overflow) {
             toastr.warning(
                 `Catch-up paused at ${completed}/${totalBatches}. Progress saved — will continue on next message.`,
                 'Summaryception',
-                { timeOut: 5000 }
+                { timeOut: TUNING.toastLonger }
             );
         } else if (failed === 0) {
             toastr.success(
                 `Catch-up complete! ${completed} batches processed.`,
                 'Summaryception',
-                { timeOut: 4000 }
+                { timeOut: TUNING.toastLong }
             );
         } else {
             toastr.warning(
                 `Catch-up finished. ${completed} succeeded, ${failed} failed (will retry on next trigger).`,
                 'Summaryception',
-                { timeOut: 6000 }
+                { timeOut: TUNING.toastExtended }
             );
         }
 
@@ -1425,7 +1465,7 @@ async function maybePromoteLayer(layerIndex) {
         toastr.info(
             `Seeded Layer ${layerIndex + 1} from Layer ${layerIndex} (free promotion)`,
             'Summaryception',
-            { timeOut: 2000 }
+            { timeOut: TUNING.toastDefault }
         );
 
         if (layer.length > s.snippetsPerLayer) {
@@ -1444,7 +1484,7 @@ async function maybePromoteLayer(layerIndex) {
     toastr.info(
         `Promoting ${toMerge.length} snippets: Layer ${layerIndex} → Layer ${layerIndex + 1}`,
         'Summaryception',
-        { timeOut: 3000, progressBar: true }
+        { timeOut: TUNING.toastMedium, progressBar: true }
     );
 
     const metaSummary = await callSummarizer(storyTxt, contextStr);
@@ -1510,7 +1550,9 @@ function updateInjection() {
 
         if (!s.enabled) {
             if (_lastInjected !== '') {
-                setExtensionPrompt(MODULE_NAME, '', 1, 12, false, 1);// variables explained in order: (in chat = 1, in sys prompt = 0), (depth from generation point (user input), number of messages), (true/false watched by world info, should be false), (system = 0, user = 1, assistant = 2) | current variable selection: 1, 0, false, 1 -> in chat, depth 0, not scanned, user
+                setExtensionPrompt(MODULE_NAME, '',
+                    TUNING.injectionPosition, TUNING.injectionDepth,
+                    TUNING.injectionScan, TUNING.injectionRole);
                 _lastInjected = '';
             }
             return;
@@ -1519,7 +1561,9 @@ function updateInjection() {
         const summaryBlock = assembleSummaryBlock();
         if (summaryBlock === _lastInjected) return;
 
-        setExtensionPrompt(MODULE_NAME, summaryBlock || '', 1, 12, false, 1);// (in chat = 1, in sys prompt = 0), (depth from generation point, number of messages), (true/false watched by world info, should be false), (system = 0, user = 1, assistant = 2) / 1, 0, false, 1 -> in chat, depth 0, not scanned, user
+        setExtensionPrompt(MODULE_NAME, summaryBlock || '',
+            TUNING.injectionPosition, TUNING.injectionDepth,
+            TUNING.injectionScan, TUNING.injectionRole);
         _lastInjected = summaryBlock || '';
 
         log(`Injection updated: ${(summaryBlock || '').length} chars`);
@@ -1540,7 +1584,7 @@ function onMessageReceived(messageIndex) {
                 await maybeSummarizeTurns();
                 updateInjection();
                 updateUI();
-            }, 500);
+            }, TUNING.messageReceivedDelay);
         }
     } catch (e) {
         log('onMessageReceived error:', e);
@@ -1554,7 +1598,7 @@ function onChatChanged() {
         await repairIfBranched();
         updateInjection();
         updateUI();
-    }, 100);
+    }, TUNING.chatChangedDelay);
 }
 
 function onGenerationStarted() {
@@ -1656,19 +1700,15 @@ function updateUI() {
         $('#sc_summarizer_system_prompt').val(s.summarizerSystemPrompt);
         $('#sc_summarizer_user_prompt').val(s.summarizerUserPrompt);
         // ── Prompt preset migration & sync ──
-        // Migration: existing users with the old game-state default get upgraded to narrative.
-        // Users who customized their prompt get marked as 'custom'.
         if (!s.promptPreset) {
             const currentPrompt = (s.summarizerUserPrompt || '').trim();
             const gameStatePrompt = PROMPT_PRESETS.gamestate.trim();
 
             if (!currentPrompt || currentPrompt === gameStatePrompt) {
-                // User had the old default — upgrade to narrative
                 s.promptPreset = 'narrative';
                 s.summarizerUserPrompt = PROMPT_PRESETS.narrative;
                 saveSettings();
             } else {
-                // User customized their prompt — mark as custom
                 s.promptPreset = 'custom';
                 saveSettings();
             }
@@ -1805,7 +1845,7 @@ function updateSnippetBrowser() {
                         sn.text = newText;
                         await saveChatStore();
                         updateInjection();
-                        toastr.success('Snippet updated', 'Summaryception', { timeOut: 1500 });
+                        toastr.success('Snippet updated', 'Summaryception', { timeOut: TUNING.toastShort });
                     }
                     updateSnippetBrowser();
                 } else if (e.key === 'Escape') {
@@ -1818,7 +1858,7 @@ function updateSnippetBrowser() {
                     sn.text = newText;
                     await saveChatStore();
                     updateInjection();
-                    toastr.success('Snippet updated', 'Summaryception', { timeOut: 1500 });
+                    toastr.success('Snippet updated', 'Summaryception', { timeOut: TUNING.toastShort });
                 }
                 updateSnippetBrowser();
             });
@@ -1846,7 +1886,7 @@ function updateSnippetBrowser() {
             toastr.warning(
                 'Only Layer 0 (turn summary) snippets can be regenerated. Promoted meta-summaries have no source turns.',
                 'Summaryception',
-                { timeOut: 5000 }
+                { timeOut: TUNING.toastLonger }
             );
             return;
         }
@@ -1885,7 +1925,7 @@ function updateSnippetBrowser() {
             const contextStr = contextParts.length > 0 ? contextParts.join(' ') : '(none yet)';
 
             toastr.info(`Regenerating summary for turns ${rangeStart}–${rangeEnd}…`, 'Summaryception', {
-                timeOut: 3000,
+                timeOut: TUNING.toastMedium,
                 progressBar: true,
             });
 
@@ -1904,7 +1944,7 @@ function updateSnippetBrowser() {
             updateInjection();
             updateUI();
 
-            toastr.success(`Snippet regenerated for turns ${rangeStart}–${rangeEnd}`, 'Summaryception', { timeOut: 3000 });
+            toastr.success(`Snippet regenerated for turns ${rangeStart}–${rangeEnd}`, 'Summaryception', { timeOut: TUNING.toastMedium });
 
         } finally {
             isSummarizing = false;
@@ -1959,13 +1999,13 @@ function bindUIEvents() {
             toastr.info(
                 'Summarization paused. Existing summaries will continue to be injected. Use Force Summarize or unpause to catch up.',
                 'Summaryception',
-                { timeOut: 5000 }
+                { timeOut: TUNING.toastLonger }
             );
         } else {
             toastr.info(
                 'Summarization resumed. Will process new turns automatically.',
                 'Summaryception',
-                { timeOut: 3000 }
+                { timeOut: TUNING.toastMedium }
             );
         }
     });
@@ -1978,7 +2018,7 @@ function bindUIEvents() {
             toastr.info(
                 'Message hiding disabled. Summarized messages will remain visible but still be excluded from LLM context via the sc_ghosted flag.',
                 'Summaryception',
-                { timeOut: 5000 }
+                { timeOut: TUNING.toastLonger }
             );
         }
     });
@@ -2065,7 +2105,7 @@ function bindUIEvents() {
 
                 repaired++;
 
-                if (repaired % 5 === 0) {
+                if (repaired % TUNING.repairProgressInterval === 0) {
                     $(progressToast).find('.toast-message').text(
                         `Repairing: found ${repaired} orphaned messages...`
                     );
@@ -2086,10 +2126,10 @@ function bindUIEvents() {
             toastr.success(
                 `Repaired ${repaired} orphaned messages. They are now visible to the summarizer again.`,
                 'Summaryception',
-                { timeOut: 5000 }
+                { timeOut: TUNING.toastLonger }
             );
         } else {
-            toastr.info('No orphaned messages found.', 'Summaryception', { timeOut: 3000 });
+            toastr.info('No orphaned messages found.', 'Summaryception', { timeOut: TUNING.toastMedium });
         }
     });
 
@@ -2150,7 +2190,7 @@ function bindUIEvents() {
             }
 
             const overflow = visibleTurns.length - s.verbatimTurns;
-            toastr.info(`${overflow} turns to process. Starting...`, 'Summaryception', { timeOut: 2000 });
+            toastr.info(`${overflow} turns to process. Starting...`, 'Summaryception', { timeOut: TUNING.toastDefault });
 
             await runCatchup(visibleTurns, overflow);
             updateInjection();
@@ -2166,9 +2206,9 @@ function bindUIEvents() {
             return;
         }
         abortSummarization();
-        toastr.warning('Summarization stopped. Progress has been saved.', 'Summaryception', { timeOut: 4000 });
+        toastr.warning('Summarization stopped. Progress has been saved.', 'Summaryception', { timeOut: TUNING.toastLong });
         $(this).prop('disabled', true);
-        setTimeout(() => $(this).prop('disabled', false), 2000);
+        setTimeout(() => $(this).prop('disabled', false), TUNING.stopButtonCooldown);
         updateUI();
     });
 
@@ -2226,7 +2266,7 @@ function bindUIEvents() {
                 toastr.success(
                     `Memory imported. ${store.layers.reduce((sum, l) => sum + (l?.length || 0), 0)} snippets loaded, messages ghosted up to index ${store.summarizedUpTo}.`,
                                'Summaryception',
-                               { timeOut: 4000 }
+                               { timeOut: TUNING.toastLong }
                 );
             } catch (err) {
                 console.error(LOG_PREFIX, err);
@@ -2279,7 +2319,6 @@ function bindUIEvents() {
         if (s.promptPreset !== 'custom') {
             const presetText = PROMPT_PRESETS[s.promptPreset];
             if (currentText !== presetText) {
-                // Auto-save before we switch to custom
                 s.promptPreset = 'custom';
                 s.lastCustomPrompt = currentText;
                 $('#sc_prompt_preset').val('custom');
@@ -2287,7 +2326,6 @@ function bindUIEvents() {
                 updateCustomPromptSlots();
             }
         } else {
-            // Keep lastCustomPrompt in sync while editing in custom mode
             s.lastCustomPrompt = currentText;
         }
 
@@ -2321,7 +2359,7 @@ function bindUIEvents() {
         toastr.success(
             `Prompt "${name}" ${isOverwrite ? 'updated' : 'saved'}.`,
             'Summaryception',
-            { timeOut: 2000 }
+            { timeOut: TUNING.toastDefault }
         );
     });
 
@@ -2347,7 +2385,7 @@ function bindUIEvents() {
         $('#sc_prompt_preset').val('custom');
         saveSettings();
 
-        toastr.success(`Loaded prompt "${name}".`, 'Summaryception', { timeOut: 2000 });
+        toastr.success(`Loaded prompt "${name}".`, 'Summaryception', { timeOut: TUNING.toastDefault });
     });
 
     // ── Custom Prompt: Delete named slot ──
@@ -2367,7 +2405,7 @@ function bindUIEvents() {
         }
 
         updateCustomPromptSlots();
-        toastr.info(`Prompt "${name}" deleted.`, 'Summaryception', { timeOut: 2000 });
+        toastr.info(`Prompt "${name}" deleted.`, 'Summaryception', { timeOut: TUNING.toastDefault });
     });
 
     // ── Custom Prompt: Export as .txt ──
@@ -2385,7 +2423,7 @@ function bindUIEvents() {
         a.download = `summaryception_prompt_${Date.now()}.txt`;
         a.click();
         URL.revokeObjectURL(url);
-        toastr.success('Prompt exported.', 'Summaryception', { timeOut: 2000 });
+        toastr.success('Prompt exported.', 'Summaryception', { timeOut: TUNING.toastDefault });
     });
 
     // ── Custom Prompt: Import from .txt ──
@@ -2416,7 +2454,7 @@ function bindUIEvents() {
                 toastr.success(
                     `Prompt imported from "${file.name}".`,
                     'Summaryception',
-                    { timeOut: 3000 }
+                    { timeOut: TUNING.toastMedium }
                 );
             } catch (err) {
                 console.error(LOG_PREFIX, err);
@@ -2461,7 +2499,7 @@ function bindUIEvents() {
         toastr.success(
             'Advanced settings reset to defaults. Connection settings and summary memory were preserved.',
             'Summaryception',
-            { timeOut: 4000 }
+            { timeOut: TUNING.toastLong }
         );
     });
 }
@@ -2681,7 +2719,7 @@ function showConnectionStatus(type, message) {
     if (type !== 'loading') {
         setTimeout(() => {
             if (container) container.style.display = 'none';
-        }, 8000);
+        }, TUNING.connectionStatusTimeout);
     }
 }
 
@@ -2757,6 +2795,6 @@ async function fetchProfilesFallback(selectElement, currentValue) {
     eventSource.on(event_types.APP_READY, () => {
         updateInjection();
         updateUI();
-        console.log(LOG_PREFIX, 'v5.5.3 loaded. Connection Settings available');
+        console.log(LOG_PREFIX, 'v5.5.4 loaded. Connection Settings available');
     });
 })();
