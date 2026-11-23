@@ -635,7 +635,11 @@ function buildPassageFromRange(chat, startIdx, endIdx) {
         const isUserHidden = (m.is_system || m.is_hidden) && !m.extra?.sc_ghosted;
         if (isUserHidden) continue;
 
-        const speaker = m.is_user ? 'Player' : 'Assistant';
+        // Label speakers with their real names so the summarizer attributes
+        // dialogue to the right person instead of collapsing everyone into
+        // "assistant". Falls back to the generic labels if a name is missing.
+        const speaker = m.is_user ? (m.name || getPlayerName()) : (m.name || 'Assistant');
+
         lines.push(`${speaker}: ${m.mes.trim()}`);
     }
     return lines.join('\n');
