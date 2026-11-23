@@ -1515,7 +1515,7 @@ function assembleSummaryBlock() {
 
     if (snippets.length === 0) return '';
 
-    return s.injectionTemplate.replace('{{summary}}', snippets.join(' '));
+    return s.injectionTemplate.replace('{{summary}}', snippets.map((text, i) => `  ${i + 1}. ${text}`).join('\n'));
 }
 
 // ─── Injection via setExtensionPrompt ────────────────────────────────
